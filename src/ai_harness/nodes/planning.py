@@ -10,6 +10,48 @@ from ..models import Specialist, WorkUnit
 from ..modules import memory, progress, tool_log
 
 PLAN_FILE = ".harness-plan.json"
+HARNESS_FILES = ("package.json", "index.html", "vite.config.ts")
+
+
+def _vite_react(files: list[str]) -> str:
+    """The entry file when this is a Vite React tree, else ''."""
+    return "src/main.tsx" if "src/main.tsx" in files else "src/main.jsx" if "src/main.jsx" in files else ""
+
+
+def _manifest(prompt: str, entry: str) -> str:
+    name = "-".join(word for word in "".join(c if c.isalnum() else " " for c in prompt.lower()).split()[:4])
+    body = {
+        "name": name or "app",
+        "private": True,
+        "version": "0.0.0",
+        "type": "module",
+        "scripts": {"dev": "vite", "build": "vite build", "preview": "vite preview"},
+        "dependencies": {"react": "^18.3.1", "react-dom": "^18.3.1"},
+        "devDependencies": {"@vitejs/plugin-react": "^4.3.1", "vite": "^5.4.0"},
+    }
+    if entry.endswith(".tsx"):
+        body["devDependencies"]["typescript"] = "^5.5.4"
+    return json.dumps(body, indent=2) + "\n"
+
+
+def _index(entry: str) -> str:
+    return (
+        '<!doctype html>\n<html lang="en">\n  <head>\n'
+        '    <meta charset="UTF-8" />\n'
+        '    <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n'
+        "    <title>Portfolio</title>\n  </head>\n  <body>\n"
+        '    <div id="root"></div>\n'
+        f'    <script type="module" src="/{entry}"></script>\n'
+        "  </body>\n</html>\n"
+    )
+
+
+def _vite_config() -> str:
+    return (
+        'import { defineConfig } from "vite";\n'
+        'import react from "@vitejs/plugin-react";\n\n'
+        "export default defineConfig({ plugins: [react()] });\n"
+    )
 
 
 def assign(roster: list[Specialist], units: list[WorkUnit]) -> dict[str, Specialist]:
@@ -36,6 +78,22 @@ async def run(run: RunState, planner: Specialist) -> tuple[list[WorkUnit], list[
     objective, units, files, questions, usage = await planner_agent.plan(planner, run.prompt, memory.load())
     await run.emit(run.track_usage(planner, "planning", usage))
 
+    # A manifest is boilerplate, not a design decision. The planner naming Next.js for a
+    # tree with src/main.tsx is how a correct portfolio became an unbuildable one; the
+    # harness owns the Vite shell and the agent owns the files that need judgement.
+    entry = _vite_react(files)
+    harness_files: dict[str, str] = {}
+    if entry:
+        for path in HARNESS_FILES:
+            if path not in files:
+                files.append(path)
+        units = [unit for unit in units if unit.file not in HARNESS_FILES]
+        harness_files = {
+            "package.json": _manifest(run.prompt, entry),
+            "index.html": _index(entry),
+            "vite.config.ts": _vite_config(),
+        }
+
     mapping = assign(run.specialists, units)
     for unit in units:
         unit.agent = mapping[unit.id].id
@@ -50,6 +108,20 @@ async def run(run: RunState, planner: Specialist) -> tuple[list[WorkUnit], list[
     await run.emit({"type": "scaffold", "files": created, "objective": objective})
     for path in created:
         run.files[path] = {"agent": None, "content": "", "done": False}
+
+    for path, content in harness_files.items():
+        run.fm.write(path, content)
+        run.files[path] = {"agent": "harness", "content": content, "done": True}
+        await run.emit({"type": "file_end", "agent": "harness", "path": path, "lines": content.count("\n") + 1})
+    if harness_files:
+        await run.emit(
+            {
+                "type": "message",
+                "from": "harness",
+                "kind": "plan",
+                "text": "Wrote the Vite manifest, index.html and config — the agents write the app.",
+            }
+        )
 
     # The checklist and the plan go to disk before any model writes: `todo.md` is the
     # recitation every later prompt re-reads, and `.harness-plan.json` is what a resumed

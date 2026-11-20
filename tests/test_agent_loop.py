@@ -326,6 +326,11 @@ def test_native_tools_fall_back_to_the_text_protocol(tmp_path: Path, monkeypatch
     assert calls == {"native": 1, "text": 1}
 
 
+def test_native_tool_specs_cover_every_text_tool() -> None:
+    names = {spec["function"]["name"] for spec in agent_loop.TOOL_SPECS}
+    assert names == set(agent_loop.TOOLS)
+
+
 def test_parse_step_tolerates_fences_prose_and_flat_args() -> None:
     call, error = agent_loop.parse_step(
         'Here is the call:\n```json\n{"thought":"read","tool":"read_file","file":"index.html"}\n```'

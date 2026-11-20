@@ -252,7 +252,10 @@ async def start(run_id: str, approved: bool = False) -> Share:
 
     share_obj.process = process
     try:
-        share_obj.url = await _read_url(share_obj, process)
+        base_url = await _read_url(share_obj, process)
+        # The token path goes in the copied link; the app's root still redirects here
+        # for a visitor who trims it.
+        share_obj.url = f"{base_url.rstrip('/')}/{token}/"
     except ShareError:
         await stop(run_id, reason="the tunnel failed")
         raise

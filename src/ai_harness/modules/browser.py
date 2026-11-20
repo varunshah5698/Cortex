@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
+import signal
 from pathlib import Path
 
 from ..config.settings import (
@@ -117,11 +119,17 @@ async def check(url: str | None, interact: bool | None = None) -> dict:
             env=permissions.safe_env({"HARNESS_CHROME": CHROME_PATH}),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
         )
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=BROWSER_TIMEOUT + 5)
         except asyncio.TimeoutError:
-            process.kill()
+            # Node's Chrome child is in this process group; killing only Node would leave
+            # a headless Chrome holding the profile and a debugging port.
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                process.kill()
             await process.wait()
             return {
                 "ok": False,
