@@ -49,7 +49,16 @@ async def run(run: RunState, agent: Specialist, units: list[WorkUnit]) -> str:
         )
     except llm.ProviderError as exc:
         await run.emit({"type": "error", "message": str(exc), "agent": agent.id})
-        run.verification = checks
+        # The reviewer never ran, so nothing here is approved. Recording the pre-review
+        # checks unchanged let a provider outage reach `done` on a tree no model had
+        # reviewed; force the verdict to a failure so `conclude` refuses and emits a
+        # blocked `error` instead of a green run.
+        run.verification = {
+            **checks,
+            "ok": False,
+            "stage": "review-unavailable",
+            "errors": max(1, int(checks.get("errors") or 0)),
+        }
         return ""
     await run.emit(run.track_usage(agent, "review", usage))
     await run.emit({"type": "status", "agent": agent.id, "status": "done"})
@@ -287,7 +296,19 @@ async def _revise_all(
         for unit in units:
             await one(unit)
         return
-    await asyncio.gather(*(one(unit) for unit in units))
+    # One unit raising must not cancel its siblings mid-write: an un-awaited cancel leaves
+    # a half-written file behind and the run reports a failure it cannot explain. Collect
+    # the exceptions and name the file that failed instead.
+    results = await asyncio.gather(*(one(unit) for unit in units), return_exceptions=True)
+    for unit, result in zip(units, results, strict=False):
+        if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
+            await run.emit(
+                {
+                    "type": "error",
+                    "agent": agent.id,
+                    "message": f"revising {unit.file} failed: {type(result).__name__}: {result}",
+                }
+            )
 
 
 async def _agent_repair(run: RunState, targets: list[WorkUnit], findings: str) -> set[str]:

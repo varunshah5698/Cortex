@@ -156,6 +156,14 @@ async def negotiate(run: RunState, units: list[WorkUnit]) -> None:
         await run.emit({"type": "status", "agent": agent.id, "status": "idle"})
         await run.emit({"type": "message", "from": agent.id, "to": "all", "text": text[:400], "kind": "talk"})
 
+    # Same rule as the writes below: one local runner serves one request at a time, so
+    # firing every contract at once makes them queue behind each other and the last one
+    # can outlast the provider read timeout. Ordering keeps the team and the contracts,
+    # without the pile-up. A hosted roster still negotiates in parallel.
+    if all(spec.is_local for spec in run.specialists):
+        for unit in units:
+            await one(unit)
+        return
     await asyncio.gather(*(one(unit) for unit in units))
 
 

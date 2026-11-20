@@ -301,10 +301,17 @@ def test_resume_skips_planning_and_concludes_from_disk(tmp_path, monkeypatch):
     spec = Specialist(id="a1", name="A", role="reviewer", model="m", baseUrl="https://example.test/v1", apiKey="k")
     run = RunState(run_id="resume1", prompt="build a page", specialists=[spec], fresh=False)
 
-    async def fake_call(agent, messages, **kwargs):  # noqa: ANN001 - the llm.call shape
-        return "APPROVED", llm.Usage()
+    # The reviewer streams (`llm.stream`), it does not call. Stubbing `call` left the
+    # real stream to reach a provider that is not there, so the reviewer never ran and
+    # the run was judged on an unreviewed tree — the failure the review-unavailable
+    # guard exists to catch. Stub the seam the code actually uses.
+    async def fake_stream(agent, messages, **kwargs):  # noqa: ANN001 - the llm.stream shape
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats.content.append("APPROVED")
+        yield ("token", "APPROVED")
 
-    monkeypatch.setattr(llm, "call", fake_call)
+    monkeypatch.setattr(llm, "stream", fake_stream)
     asyncio.run(Orchestrator(run).resume_all())
 
     kinds = [event["type"] for event in run.events]

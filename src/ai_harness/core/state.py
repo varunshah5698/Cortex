@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..config.settings import MAX_RUN_CALLS, MAX_RUN_TOKENS, MAX_RUN_USD, RUNS_ROOT
+from ..config.settings import EVENT_MEMORY_LIMIT, MAX_RUN_CALLS, MAX_RUN_TOKENS, MAX_RUN_USD, RUNS_ROOT
 from ..models import Specialist, WorkUnit
 from ..modules import prompts
 from ..modules.budget import Budget
@@ -84,6 +84,11 @@ class RunState:
 
     async def emit(self, event: dict) -> None:
         self.events.append(event)
+        # The log on disk is the full history; memory keeps only a window. Without this
+        # cap a long run grew the resident list without bound while EVENT_MEMORY_LIMIT
+        # sat unread in settings.
+        if len(self.events) > EVENT_MEMORY_LIMIT:
+            del self.events[: len(self.events) - EVENT_MEMORY_LIMIT]
         self._record(event)
         if event.get("type") in TERMINAL_EVENTS:
             self.done = event.get("type") == "done"
