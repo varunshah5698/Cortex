@@ -71,6 +71,12 @@ Each line exists because something went wrong without it.
     spawn path that skips it, and never describe an unsandboxed process as contained.
 12. A run may not edit its own judge: `modules/protected.py` freezes a test file once it
     has content, so a revision must fix the code instead of weakening the check.
+13. Credentials live in the `0600` keyring (`modules/roster.py`, `HARNESS_KEYS_FILE`) by
+    provider endpoint, never in a roster row. A roster save must not be able to delete a
+    key; only an explicit `clearKey` does. This is why keys used to vanish on reset.
+14. A deep plan is critiqued by a different specialist (`REASON_CRITIC`) before code is
+    written, and the code prompt carries that critique. The author grading its own plan
+    was the weakness; do not drop the pass to save one call.
 
 ## Before you open a PR
 
@@ -80,8 +86,8 @@ not fall below the baseline.
 ## Do not
 
 - Edit or delete a test, or an `evals/cases.py` expectation, to make a check pass.
-- Put a provider key in the browser, a log line or a committed file. Keys live in the
-  server-side roster or the environment and are never read back to the client.
+- Put a provider key in the browser, a log line, a roster row or a committed file. Keys
+  live in the server-side keyring or the environment and are never read back to the client.
 - Weaken a guardrail to make a demo work: the `/api` origin + token check, the token and
   dollar budget, the path sandbox, the process permissions.
 - Add a dependency without asking; every install is surface area in a harness.
