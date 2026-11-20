@@ -175,7 +175,7 @@ export default function Metrics() {
         <section className="mtx-panel">
           <header>
             <h2>Ledger</h2>
-            <span>everything the harness measured</span>
+            <span>everything Cortex measured</span>
           </header>
           <table className="mtx-table">
             <thead>

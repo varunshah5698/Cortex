@@ -47,8 +47,8 @@ const LOCAL_OPERATOR: User = {
 
 export async function me(): Promise<User | null> {
   const response = await fetch(`${API}/api/auth/me`, { credentials: "include" });
-  if (response.status === 401) return onLoopback() ? LOCAL_OPERATOR : null;
-  if (!response.ok) throw new Error("The harness is not answering.");
+  if (response.status === 401) return null;
+  if (!response.ok) throw new Error("Cortex is not answering.");
   const data = (await response.json()) as { user?: User };
   return data.user ?? null;
 }
@@ -135,25 +135,49 @@ export function useSession() {
 
   useEffect(() => {
     let alive = true;
-    const refresh = () => {
-      me()
-        .then((next) => {
-          if (alive) setUser(next);
-        })
-        .catch(() => {
-          if (alive) setUser(null);
-        })
-        .finally(() => {
-          if (alive) setLoading(false);
-        });
+    let retry: number | undefined;
+    let seq = 0;
+
+    // A stop or a harness restart can answer 401 for a moment before the same cookie
+    // works again. Confirm with a second call before throwing the room back to login;
+    // a network failure keeps the current user instead of clearing it.
+    const refresh = async (confirm: boolean) => {
+      const at = ++seq;
+      if (retry) {
+        window.clearTimeout(retry);
+        retry = undefined;
+      }
+      const first = await me().catch(() => undefined);
+      if (!alive || at !== seq) return;
+      if (first !== null) {
+        if (first !== undefined) setUser(first);
+        setLoading(false);
+        return;
+      }
+      // A login just succeeded: a 401 here is more likely cookie propagation than an
+      // expired session, so keep the account the form just returned.
+      if (!confirm) {
+        setLoading(false);
+        return;
+      }
+      retry = window.setTimeout(async () => {
+        const second = await me().catch(() => undefined);
+        if (!alive || at !== seq) return;
+        if (second !== undefined) setUser(second);
+        setLoading(false);
+      }, 600);
     };
-    refresh();
-    window.addEventListener("cortex:auth", refresh);
-    window.addEventListener("cortex:unauthorized", refresh);
+
+    const onAuth = () => void refresh(false);
+    const onUnauthorized = () => void refresh(true);
+    void refresh(true);
+    window.addEventListener("cortex:auth", onAuth);
+    window.addEventListener("cortex:unauthorized", onUnauthorized);
     return () => {
       alive = false;
-      window.removeEventListener("cortex:auth", refresh);
-      window.removeEventListener("cortex:unauthorized", refresh);
+      if (retry) window.clearTimeout(retry);
+      window.removeEventListener("cortex:auth", onAuth);
+      window.removeEventListener("cortex:unauthorized", onUnauthorized);
     };
   }, []);
 

@@ -167,7 +167,7 @@ export default function Workshop() {
       saveSelected(ready[0].id);
       navigate("app");
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Could not save the roster to the harness.");
+      setNotice(err instanceof Error ? err.message : "Could not save the roster to Cortex.");
     }
   };
 
@@ -204,7 +204,7 @@ export default function Workshop() {
               Reset team
             </button>
             <button className="site-cta" onClick={launch}>
-              Launch harness
+              Launch Cortex
               <Icon name="arrowRight" size={15} />
             </button>
           </div>
@@ -232,7 +232,7 @@ export default function Workshop() {
           </span>
           <span className="ws-dot" />
           <span className="ws-hint">
-            <Icon name="shield" size={13} /> Keys are stored by the harness, not in this browser
+            <Icon name="shield" size={13} /> Keys are stored by Cortex, not in this browser
           </span>
           {save !== "idle" && (
             <>
@@ -240,10 +240,10 @@ export default function Workshop() {
               <span className="ws-hint">
                 <Icon name={save === "error" ? "alert" : "check"} size={13} />
                 {save === "saving"
-                  ? "Saving to the harness…"
+                  ? "Saving to Cortex…"
                   : save === "saved"
-                    ? "Saved to the harness"
-                    : "Not saved — the harness is unreachable"}
+                    ? "Saved to Cortex"
+                    : "Not saved — Cortex is unreachable"}
               </span>
             </>
           )}
@@ -331,7 +331,7 @@ export default function Workshop() {
                           s.kind === "ollama"
                             ? "Not required for a local daemon"
                             : s.has_key && !s.apiKey
-                              ? "Saved on the harness — type to replace"
+                              ? "Saved on Cortex — type to replace"
                               : "sk-…"
                         }
                         autoComplete="off"
@@ -431,7 +431,7 @@ export default function Workshop() {
             Back to site
           </button>
           <button className="cta-primary" onClick={launch} disabled={!canLaunch}>
-            Enter the harness
+            Enter Cortex
             <Icon name="arrowRight" size={16} />
           </button>
         </div>

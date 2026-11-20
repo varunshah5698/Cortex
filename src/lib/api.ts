@@ -13,7 +13,10 @@ export function installApiClient() {
     if (!url.includes("/api/")) return nativeFetch(input, init);
 
     const response = await nativeFetch(input, { credentials: "include", ...init });
-    if (response.status === 401 && !url.includes("/api/auth/")) {
+    // A failed stop is not a sign-out. Stop/close calls are advisory; keeping the room
+    // mounted matters more than treating one 401 as an expired session.
+    const quiet = /\/api\/run\/[^/]+\/(stop|serve\/stop|share\/stop)$/.test(url.split("?")[0]);
+    if (response.status === 401 && !quiet && !url.includes("/api/auth/")) {
       window.dispatchEvent(new Event("cortex:unauthorized"));
     }
     return response;

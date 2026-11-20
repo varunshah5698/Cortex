@@ -1,9 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Icon } from "../components/Icon";
 import { navigate } from "../lib/router";
-import { adoptCloudSession, login, signup, takeCallbackToken, type User } from "../lib/auth";
-import { startGoogleSignIn } from "../lib/cloud";
-import { saveToken } from "../lib/convex";
+import { API } from "../lib/providers";
+import { login, signup, type User } from "../lib/auth";
 
 type Mode = "signin" | "signup";
 
@@ -47,56 +46,23 @@ export default function Login({ user, onAuth, onLogout }: Props) {
   const [show, setShow] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [googleBusy, setGoogleBusy] = useState(false);
+  const [durable, setDurable] = useState(true);
 
-  // A Google sign-in comes back to this page with the session token in the fragment. It
-  // is adopted once, then removed from the address bar by `takeCallbackToken`, so a
-  // refresh does not replay it and a copied URL does not carry a credential.
   useEffect(() => {
-    const token = takeCallbackToken();
-    if (!token) {
-      const params = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
-      const failure = params.get("error");
-      if (failure) setError(failure);
-      return;
-    }
-    let alive = true;
-    setBusy(true);
-    // Convex holds the session; the harness needs its own cookie, so both are set here.
-    saveToken(token);
-    adoptCloudSession(token)
-      .then((account) => {
-        if (!alive) return;
-        onAuth(account);
-        navigate("workshop");
-      })
-      .catch((err) => {
-        if (!alive) return;
-        saveToken(null);
-        setError(err instanceof Error ? err.message : "Could not finish signing you in.");
-      })
-      .finally(() => {
-        if (alive) setBusy(false);
+    fetch(`${API}/api/health`)
+      .then((res) => res.json())
+      .then((data: { auth?: { durable?: boolean } }) => setDurable(data.auth?.durable !== false))
+      .catch(() => {
+        /* health is a hint, not a gate */
       });
-    return () => {
-      alive = false;
-    };
-    // Runs once on mount: the callback token is consumed, not watched.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const google = async () => {
-    setError(null);
-    setGoogleBusy(true);
-    try {
-      // The redirect URI is registered against the Convex site, so the exchange and the
-      // session both happen there; this page only sends the browser and reads it back.
-      window.location.href = await startGoogleSignIn("/#/login");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Google sign-in is not available right now.");
-      setGoogleBusy(false);
-    }
-  };
+  const persistenceNote = durable ? null : (
+    <p className="auth-warn" role="status">
+      Accounts and sessions reset when this instance restarts. Set <code>HARNESS_AUTH_DB</code> to a
+      persistent disk to keep them.
+    </p>
+  );
 
   const switchMode = (next: Mode) => {
     setMode(next);
@@ -169,6 +135,7 @@ export default function Login({ user, onAuth, onLogout }: Props) {
                 Sign out
               </button>
             </p>
+            {persistenceNote}
           </div>
         </div>
       </div>
@@ -219,7 +186,7 @@ export default function Login({ user, onAuth, onLogout }: Props) {
           <p className="auth-sub">
             {mode === "signup"
               ? "One account, your own way in. No demo credentials."
-              : "Sign in to open the harness workshop."}
+              : "Sign in to open the Cortex workshop."}
           </p>
 
           <div className="auth-switch" role="tablist" aria-label="Account access">
@@ -336,6 +303,7 @@ export default function Login({ user, onAuth, onLogout }: Props) {
               {mode === "signup" ? "Sign in" : "Create an account"}
             </button>
           </p>
+          {persistenceNote}
         </div>
       </div>
     </div>

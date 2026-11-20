@@ -400,6 +400,21 @@ def test_verify_issues_become_reviewer_evidence(tmp_path: Path) -> None:
 # ---------- scaffolding follows the request ----------
 
 
+def test_a_declared_file_without_a_unit_gets_a_file_specific_job(tmp_path: Path) -> None:
+    raw = (
+        '{"objective":"a portfolio","files":["src/main.tsx","src/App.tsx","src/styles.css",'
+        '"src/components/Hero.tsx"],"work_units":[]}'
+    )
+    _, units, _, _ = planner_agent.parse(raw, "build a developer portfolio")
+    briefs = {unit.file: unit.objective for unit in units}
+
+    assert briefs["src/main.tsx"].startswith("Mount the root App")
+    assert briefs["src/App.tsx"].startswith("Compose the page using only")
+    assert "Hero" in briefs["src/App.tsx"]
+    assert "classes" in briefs["src/styles.css"]
+    assert "Hero" in briefs["src/components/Hero.tsx"]
+
+
 def test_scaffold_follows_the_requested_stack(tmp_path: Path) -> None:
     _, react, react_files, _ = planner_agent.parse("not json at all", "build a react dashboard")
     # React scaffolds its own HTML shell and a real stylesheet, not inline-only styles.

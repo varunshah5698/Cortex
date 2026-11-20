@@ -168,7 +168,7 @@ export async function resumeRun(runId: string): Promise<string> {
   });
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
-    throw new Error(detail.slice(0, 250) || `Harness responded ${res.status}`);
+    throw new Error(detail.slice(0, 250) || `Cortex responded ${res.status}`);
   }
   return ((await res.json()) as { run_id: string }).run_id;
 }
@@ -182,7 +182,7 @@ export async function startRun(prompt: string, specialists: Specialist[], depth:
   });
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
-    throw new Error(detail.slice(0, 250) || `Harness responded ${res.status}`);
+    throw new Error(detail.slice(0, 250) || `Cortex responded ${res.status}`);
   }
   return ((await res.json()) as { run_id: string }).run_id;
 }
@@ -211,7 +211,7 @@ export async function testProvider(specialist: Specialist): Promise<ProviderTest
         kind: specialist.kind,
       }),
     });
-    if (!res.ok) return { ok: false, error: `Harness responded ${res.status}` };
+    if (!res.ok) return { ok: false, error: `Cortex responded ${res.status}` };
     return (await res.json()) as ProviderTest;
   } catch {
     return { ok: false, error: offline };
@@ -244,13 +244,17 @@ export async function startChat(
     } catch {
       /* keep the raw body */
     }
-    throw new Error(detail || `Harness responded ${res.status}`);
+    throw new Error(detail || `Cortex responded ${res.status}`);
   }
   return ((await res.json()) as { run_id: string }).run_id;
 }
 
 export async function stopRun(id: string): Promise<void> {
-  await fetch(`${API}/api/run/${id}/stop`, { method: "POST" }).catch(() => {});
+  const res = await fetch(`${API}/api/run/${id}/stop`, { method: "POST" });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { detail?: string };
+    throw new Error(body.detail || `The harness answered ${res.status}`);
+  }
 }
 
 export function subscribe(id: string, onEvent: (event: HarnessEvent) => void): EventSource {

@@ -41,6 +41,6 @@ export default function Root() {
     case "metrics":
       return <Metrics />;
     default:
-      return <Landing />;
+      return <Landing user={user} onLogout={signOut} />;
   }
 }

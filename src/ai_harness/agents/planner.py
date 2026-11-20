@@ -164,7 +164,7 @@ def _role_for(path: str) -> str:
     return "general"
 
 
-def _objective_for(path: str, prompt: str) -> str:
+def _objective_for(path: str, prompt: str, files: list[str] | tuple[str, ...] = ()) -> str:
     """A file-specific brief for a unit the planner declared but did not describe.
 
     "Complete this file so the whole app runs" was read literally: the entry agent
@@ -172,12 +172,20 @@ def _objective_for(path: str, prompt: str) -> str:
     one job this file has, not the whole request.
     """
     name = path.rsplit("/", 1)[-1]
+    components = [item for item in files if "/components/" in item]
+    component_names = ", ".join(item.rsplit("/", 1)[-1].rsplit(".", 1)[0] for item in components)
     if name in ("main.tsx", "main.jsx", "main.ts", "main.js"):
-        return "Mount the root App component into #root and import the stylesheet. Do not re-implement the page."
+        return "Mount the root App component from ./App into #root and import the stylesheet. Do not re-implement the page."
     if name in ("App.tsx", "App.jsx", "App.vue", "App.svelte"):
+        if component_names:
+            return (
+                f"Compose the page using only these component files: {component_names}. "
+                "Import each by its exact path; do not invent Header/Footer or rename a component."
+            )
         return "Compose the section components into the page, importing each one. Do not duplicate a section."
     if path.endswith((".css", ".scss")):
-        return "Define only the classes the components use, with responsive layout and theme. No markup."
+        suffix = f" for {component_names}" if component_names else ""
+        return f"Define only the classes the components use{suffix}, with responsive layout and theme. No markup."
     if "/components/" in path:
         return f"Implement only the {name} section component and export it for the root component to import."
     return f"Implement only {path} so it fits the other files. Request: {prompt}"
@@ -227,7 +235,7 @@ def parse(raw: str, prompt: str) -> tuple[str, list[WorkUnit], list[str]]:
         if free and unit.file != free:
             # The unit was described for a different path; its brief is now wrong.
             unit.file = free
-            unit.objective = _objective_for(free, prompt)
+            unit.objective = _objective_for(free, prompt, declared)
         else:
             unit.file = free or _clean(unit.file, index)
         assigned.add(unit.file)
@@ -244,7 +252,7 @@ def parse(raw: str, prompt: str) -> tuple[str, list[WorkUnit], list[str]]:
                 title=path.split("/")[-1][:60],
                 role=_role_for(path),
                 file=path,
-                objective=_objective_for(path, prompt),
+                objective=_objective_for(path, prompt, declared),
             )
         )
         assigned.add(path)

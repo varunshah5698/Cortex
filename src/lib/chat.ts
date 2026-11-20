@@ -162,7 +162,7 @@ export async function streamChatHarness({
           finish();
           break;
         case "stream_lost":
-          finish(new Error("The harness stream dropped before the answer finished."));
+          finish(new Error("The Cortex stream dropped before the answer finished."));
           break;
         default:
           break;

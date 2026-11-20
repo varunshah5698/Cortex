@@ -304,19 +304,30 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
             # Ultra does not wait for the end-of-run review: the freshly written file is
             # checked now, and its author gets a bounded tool loop to fix it while the
             # file is still the thing they are thinking about.
-            immediate = verify.check(run.files, [unit.file])
+            # Only a file that does not parse is repaired here. Missing peers, an empty
+            # sibling or a style warning are facts about the whole tree; the end-of-run
+            # review owns them. Repairing them per file made Ultra spin on a stylesheet
+            # that was waiting for the next component.
+            def _unit_syntax() -> dict:
+                report = verify.check(run.files, [unit.file])
+                syntax = [
+                    item for item in report.get("issues", []) if item.get("code") in ("syntax_error", "invalid_json")
+                ]
+                return {**report, "ok": not syntax, "issues": syntax, "errors": len(syntax), "warnings": 0}
+
+            immediate = _unit_syntax()
             if not immediate.get("ok", True):
                 await run.emit(
                     {
                         "type": "message",
                         "from": "verify",
-                        "text": f"{unit.file} failed its first check — repairing before the next file.",
+                        "text": f"{unit.file} does not parse — repairing before the next file.",
                         "kind": "review",
                     }
                 )
 
                 async def _unit_check() -> dict:
-                    return verify.check(run.files, [unit.file])
+                    return _unit_syntax()
 
                 await agent_loop.repair(
                     run,
