@@ -109,11 +109,13 @@ URL expires with `HARNESS_SHARE_TTL`. It never exposes the multi-run preview app
 The default provider is `cloudflared` (`brew install cloudflared`); set
 `HARNESS_TUNNEL_COMMAND` with a `{url}` placeholder for another tunnel.
 
-**Per-run cloud execution** is a second mode: `HARNESS_RUNNER_MODE=cloud` sends the
-finished workspace to a separately deployed `ai_harness.cloud_runner` service, which
-installs, serves and proxies it on its own public origin. The harness never sends its
-`/api`, roster or keys to that runner. See `docs/cloud-runner.md`; `render.yaml` defines
-both services.
+**Per-run cloud execution** is a second mode:
+`HARNESS_RUNNER_MODE=vercel` deploys static/Node runs to a temporary Vercel project and
+uses its production URL; `HARNESS_RUNNER_MODE=cloud` sends the finished workspace to a
+separately deployed `ai_harness.cloud_runner` service instead. The harness never sends
+its `/api`, roster or keys to either. Vercel deployments are removed at
+`HARNESS_VERCEL_TTL`; the cloud runner is TTL-bounded too. See `docs/cloud-runner.md`;
+`render.yaml` defines both Render services.
 
 A run is bounded and auditable, not just observable. Every call is priced from a
 model table and charged to the run's ledger; a token or dollar budget stops the run

@@ -236,6 +236,15 @@ CLOUD_RUNNER_URL = os.getenv("HARNESS_CLOUD_RUNNER_URL", "").strip().rstrip("/")
 CLOUD_RUNNER_TOKEN = os.getenv("HARNESS_CLOUD_RUNNER_TOKEN", "").strip()
 CLOUD_RUNNER_TIMEOUT = max(10.0, _float("HARNESS_CLOUD_RUNNER_TIMEOUT", 120.0))
 
+# Per-run Vercel deployments: `HARNESS_RUNNER_MODE=vercel` hosts static/Node runs on
+# Vercel and removes them after the TTL. The CLI login on this machine is enough; a
+# server-to-server token is only needed on a headless host.
+VERCEL_BIN = os.getenv("HARNESS_VERCEL_BIN", "vercel").strip() or "vercel"
+VERCEL_TOKEN = os.getenv("HARNESS_VERCEL_TOKEN", "").strip()
+VERCEL_SCOPE = os.getenv("HARNESS_VERCEL_SCOPE", "").strip()
+VERCEL_TIMEOUT = max(60.0, _float("HARNESS_VERCEL_TIMEOUT", 240.0))
+VERCEL_TTL = _float("HARNESS_VERCEL_TTL", 3600.0)
+
 TOKEN_FILE = Path(os.getenv("HARNESS_TOKEN_FILE", WORKSPACE_ROOT / ".harness-token"))
 ROSTER_FILE = Path(os.getenv("HARNESS_ROSTER_FILE", WORKSPACE_ROOT / ".harness-roster.json"))
 # Keys live outside the generated workspace and are stored per provider, so resetting

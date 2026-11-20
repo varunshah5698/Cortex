@@ -95,6 +95,8 @@ Each line exists because something went wrong without it.
     route on `/api`. The harness submits a tar.gz with a server-to-server token; the
     runner has no roster, provider keys or `/api`, and returns a per-run capability URL.
     A new cloud provider must keep that boundary rather than exposing the harness.
+    Vercel (`modules/vercel_runner.py`) is the temporary static/Node provider: exact
+    project name, SSO disabled for that project, removed at the TTL or on stop.
 
 ## Before you open a PR
 

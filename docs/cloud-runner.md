@@ -54,6 +54,21 @@ python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
 The harness stores it server-side only. The runner accepts `POST /runs` only with
 `X-Runner-Token`; the public proxy path carries a different per-run secret.
 
+## Vercel mode (static and Node)
+
+`HARNESS_RUNNER_MODE=vercel` deploys each finished static/Node run to a temporary Vercel
+project (`cortex-<run_id>`) and uses the production deployment URL directly. The CLI
+login on this machine is enough locally; a headless host sets `HARNESS_VERCEL_TOKEN`.
+A run is removed at `HARNESS_VERCEL_TTL` or on `POST /serve/stop`.
+
+The project is created with an exact name, SSO protection is disabled (it is a public
+per-run preview by design), and the whole project is removed at teardown. A Python ASGI
+tree is not sent to a static host: it falls back to the local runner and the UI shows the
+local service state.
+
+On Render, the build command installs the CLI into `.vercel-cli/` because the runtime
+cannot write `/usr/lib/node_modules`; `modules/vercel_runner.py` finds that local binary.
+
 ## Limits and safety
 
 - `HARNESS_RUNNER_TTL` (default 900s) stops and deletes a run.

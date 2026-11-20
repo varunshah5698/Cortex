@@ -8,7 +8,7 @@ services:
     plan: free
     region: oregon
     branch: main
-    buildCommand: npm ci && npm run build && pip install -r requirements.txt
+    buildCommand: npm ci && npm run build && pip install -r requirements.txt && npm install --prefix .vercel-cli vercel@59.10.0
     startCommand: uvicorn ai_harness.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
     autoDeploy: true
@@ -38,8 +38,14 @@ services:
         sync: false
       # Generated apps run on the separate `cortex-runner` service below. Set both values
       # to the runner's URL and the same HARNESS_RUNNER_TOKEN.
+      # Static/Node runs deploy to Vercel; Python runs fall back to the local runner.
       - key: HARNESS_RUNNER_MODE
-        value: cloud
+        value: vercel
+      - key: HARNESS_VERCEL_TOKEN
+        sync: false
+      - key: HARNESS_VERCEL_TTL
+        value: "3600"
+      # Optional alternative: a separately deployed `cortex-runner` service.
       - key: HARNESS_CLOUD_RUNNER_URL
         sync: false
       - key: HARNESS_CLOUD_RUNNER_TOKEN

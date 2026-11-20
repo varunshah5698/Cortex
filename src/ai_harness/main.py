@@ -53,7 +53,7 @@ from .config.settings import (
 from .core.harness import Harness, HarnessBusy
 from .core.state import RunState, now_iso
 from .models import Specialist
-from .modules import browser, budget, cloud, llm, permissions, probe, receipt, runner
+from .modules import browser, budget, cloud, llm, permissions, probe, receipt, runner, vercel_runner
 from .modules import cloud_runner as remote_runner
 from .modules.cache import CACHE
 from .modules.roster import RosterStore
@@ -80,10 +80,15 @@ _browser_tasks: set[asyncio.Task] = set()
 # Runs executing on the separately deployed cloud runner. They are duck-typed like a
 # local `runner.Service`, so the UI and the ledger read the same payload.
 _remote_runs: dict[str, remote_runner.RemoteService] = {}
+_vercel_runs: dict[str, vercel_runner.VercelService] = {}
 
 
 def _cloud_mode() -> bool:
     return RUNNER_MODE == "cloud" and remote_runner.available()
+
+
+def _vercel_mode() -> bool:
+    return RUNNER_MODE == "vercel" and vercel_runner.available()
 
 
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
@@ -633,7 +638,7 @@ async def _browser_after_ready(run_id: str) -> None:
     """Follow a starting service and check it once it answers. Never blocks the API."""
     try:
         for _ in range(240):
-            service = runner.get(run_id) or _remote_runs.get(run_id)
+            service = runner.get(run_id) or _remote_runs.get(run_id) or _vercel_runs.get(run_id)
             if service is None:
                 return
             if isinstance(service, remote_runner.RemoteService):
@@ -724,6 +729,43 @@ async def serve_start(run_id: str, restart: bool = False, approve: bool = False)
                 task.add_done_callback(_browser_tasks.discard)
         return remote.as_dict()
 
+    if _vercel_mode() and vercel_runner.supported(workspace):
+        existing = _vercel_runs.get(run_id)
+        if existing is not None and not restart:
+            return existing.as_dict()
+        if existing is not None:
+            await existing.stop()
+            _vercel_runs.pop(run_id, None)
+        if REQUIRE_APPROVAL and not approve:
+            payload = _service_payload(None, run_id, run.browser if run is not None else None)
+            payload.update(
+                {
+                    "state": "needs_approval",
+                    "kind": "vercel",
+                    "remote": True,
+                    "detail": "approval required · deploy this run to Vercel",
+                    "pending": [f"Vercel deployment: cortex-{run_id}"],
+                    "detail_lines": [
+                        "upload the run to a temporary Vercel project",
+                        "let Vercel install and build its declared dependencies",
+                        "serve the production deployment behind its vercel.app URL",
+                    ],
+                }
+            )
+            return payload
+        try:
+            deployed = await vercel_runner.deploy(run_id, workspace)
+        except vercel_runner.VercelError as exc:
+            raise HTTPException(409, str(exc)) from None
+        _vercel_runs[run_id] = deployed
+        if run is not None:
+            _record_build(run, deployed)
+            if BROWSER_CHECK and deployed.state == "ready":
+                task = asyncio.create_task(_browser_after_ready(run_id))
+                _browser_tasks.add(task)
+                task.add_done_callback(_browser_tasks.discard)
+        return deployed.as_dict()
+
     service = await runner.start(
         run_id,
         workspace,
@@ -743,6 +785,9 @@ async def serve_start(run_id: str, restart: bool = False, approve: bool = False)
 @app.get("/api/run/{run_id}/serve")
 async def serve_status(run_id: str) -> dict:
     run = harness.get(run_id)
+    deployed = _vercel_runs.get(run_id)
+    if deployed is not None:
+        return deployed.as_dict()
     if _cloud_mode():
         remote = _remote_runs.get(run_id)
         if remote is None:
@@ -777,14 +822,18 @@ async def serve_stop(run_id: str) -> dict:
     if remote is not None:
         await remote.stop()
         return remote.as_dict()
+    deployed = _vercel_runs.pop(run_id, None)
+    if deployed is not None:
+        await deployed.stop()
+        return deployed.as_dict()
     return _service_payload(await runner.stop(run_id), run_id, run.browser if run is not None else None)
 
 
 @app.post("/api/run/{run_id}/share")
 async def share_start(run_id: str, approve: bool = False) -> dict:
     """Publish one ready run through a one-run origin. Approval is not a formality."""
-    if run_id in _remote_runs:
-        raise HTTPException(409, "this run is already public through the cloud runner")
+    if run_id in _remote_runs or run_id in _vercel_runs:
+        raise HTTPException(409, "this run is already public through its cloud deployment")
     try:
         shared = await cloud.start(run_id, approved=approve)
     except cloud.TunnelUnavailable as exc:
@@ -819,6 +868,7 @@ async def shutdown() -> None:
     await asyncio.gather(*_browser_tasks, return_exceptions=True)
     _browser_tasks.clear()
     await remote_runner.stop_all(_remote_runs)
+    await vercel_runner.stop_all(_vercel_runs)
     await cloud.stop_all()
     await runner.stop_all()
     await preview.stop_background()

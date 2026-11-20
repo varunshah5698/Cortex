@@ -101,8 +101,21 @@ def record(run, report: dict | None = None, message: str = "") -> bool:
     try:
         if not LOG.exists() or LOG.stat().st_size == 0:
             LOG.write_text(HEADER, encoding="utf-8")
-        with LOG.open("a", encoding="utf-8") as handle:
-            handle.write(row + "\n")
+        lines = LOG.read_text(encoding="utf-8").splitlines()
+        # Rows belong inside the table, not after the prose sections below it. Appending
+        # to the file made the log grow a second table under "Still open".
+        header = next(
+            (index for index, line in enumerate(lines) if line.startswith("| date | run |")),
+            None,
+        )
+        if header is None:
+            lines.extend([""] + HEADER.splitlines() + [row])
+        else:
+            last = header
+            while last + 1 < len(lines) and lines[last + 1].startswith("|"):
+                last += 1
+            lines.insert(last + 1, row)
+        LOG.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return True
     except OSError:
         return False

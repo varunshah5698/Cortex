@@ -232,13 +232,15 @@ false pass.
 
 ### Per-run cloud execution
 
-`HARNESS_RUNNER_MODE=cloud` points `POST /api/run/<id>/serve` at a separately deployed
-`ai_harness.cloud_runner` service (`docs/cloud-runner.md`). The harness sends the finished
+`HARNESS_RUNNER_MODE` chooses where a finished run executes. `local` is the default.
+`cloud` points `POST /api/run/<id>/serve` at a separately deployed
+`ai_harness.cloud_runner` service (`docs/cloud-runner.md`): the harness sends the finished
 workspace as a tar.gz to `POST /runs` with a server-to-server token; the runner extracts it
 into a private directory, calls the same `modules/runner.py` pipeline, and exposes
-`/runs/<id>/<secret>/…` on its own origin. The browser embeds that capability URL directly;
-the harness never exposes its `/api` or its keys to the runner. A run is TTL-bounded and
-removed on stop. The local runner remains the default when no runner URL is configured.
+`/runs/<id>/<secret>/…` on its own origin. `vercel` deploys static and Node trees to a
+temporary Vercel project and uses the production URL; Python trees fall back to the local
+runner. In both remote modes the browser embeds the cloud URL directly; the harness never
+exposes its `/api` or its keys. A remote run is TTL-bounded and removed on stop.
 
 ### Public shares
 

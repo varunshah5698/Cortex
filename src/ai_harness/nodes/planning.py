@@ -50,7 +50,7 @@ def _vite_config() -> str:
     return (
         'import { defineConfig } from "vite";\n'
         'import react from "@vitejs/plugin-react";\n\n'
-        "export default defineConfig({ plugins: [react()] });\n"
+        'export default defineConfig({ plugins: [react()], base: "./" });\n'  # token-prefixed preview
     )
 
 

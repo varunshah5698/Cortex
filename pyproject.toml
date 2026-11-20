@@ -37,6 +37,9 @@ ignore = ["E501", "UP038"]
 # pydantic evaluates annotations at runtime, and the project's venv is Python 3.9, so
 # `X | None` in a request model raises instead of resolving. UP045 stays off there.
 "src/ai_harness/main.py" = ["UP045"]
+# The Vercel runner is also imported by the Python 3.9 venv; `Optional[X]` is the
+# annotation that resolves there, and `X | None` is the one that raises.
+"src/ai_harness/modules/vercel_runner.py" = ["UP045"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

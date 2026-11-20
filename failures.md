@@ -12,6 +12,10 @@ belong here. The component column is the part of the harness that owned the fail
 | 2026-11-20 | manual | provider | provider keys disappeared whenever the roster was replaced or reset because a key was tied to a browser-generated row id | `modules/roster.py` |
 | 2026-11-20 | workshop | wiring | a fresh browser merged the four starter drafts into the saved roster on every load, so 3 specialists became 21 and the next save published the junk | `src/pages/Workshop.tsx` |
 | 2026-11-20 | test suite | unknown | pytest runs appended their fake failures (`budget-stop`, `deadline`, `gate`) to this file, hiding the real ones | `tests/conftest.py` |
+| 2026-11-20 | `761b7c2bb692` | plan | package.json: package.json was declared by the plan but is still empty | package.json, src/App.tsx, src/index.css, src/main.tsx |
+| 2026-11-20 | `bb3ba11a24e3` | plan | package.json declared Next.js for a Vite tree; the planner owned a manifest it could not keep consistent | package.json |
+| 2026-11-20 | `164f513cdb0d` | wiring | the preview was blank after a clean `vite build`: absolute `/assets/...` URLs 404 under the per-run token prefix | `vite.config.ts` |
+| 2026-11-20 | `164f513cdb0d` | wiring | the reviewer found truncated JSX that the structural verifier called clean; the tool loop spent 8 steps and the standard rewrite fixed it | `nodes/verify.py` |
 
 ## What changed
 
@@ -30,4 +34,3 @@ belong here. The component column is the part of the harness that owned the fail
 - Live verification is an HTTP probe, not a browser driving the UI; interaction bugs still
   need Playwright or a human.
 - The landing and build room clip at phone width; the office is a fixed-size canvas.
-| 2026-11-20 | `761b7c2bb692` | plan | package.json: package.json was declared by the plan but is still empty | package.json, src/App.tsx, src/index.css, src/main.tsx |

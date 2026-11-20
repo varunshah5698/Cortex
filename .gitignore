@@ -36,3 +36,6 @@ public/*.mp4
 # Symlinked environments are local, never tracked.
 .venv
 node_modules
+
+# Vercel CLI installed locally for the cloud runner build
+.vercel-cli/
