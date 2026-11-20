@@ -308,6 +308,28 @@ def test_resume_skips_planning_and_concludes_from_disk(tmp_path, monkeypatch):
     assert (workspace / "RECEIPT.md").is_file()
 
 
+def test_approval_detail_names_dependencies_and_scripts(tmp_path):
+    """Approving `npm install` should be a decision about react@18.3.1, not a word."""
+    from ai_harness.modules import runner
+
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "dependencies": {"react": "18.3.1"},
+                "scripts": {"build": "vite build", "dev": "vite"},
+                "devDependencies": {"typescript": "5.6.3"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
+    rows = runner.Service(run_id="detail", workspace=tmp_path).details()
+    assert "dependency react@18.3.1" in rows
+    assert "dependency typescript@5.6.3" in rows
+    assert "script build: vite build" in rows
+    assert "entry index.html" in rows
+
+
 def test_preview_probe_without_a_service_is_an_honest_failure():
     from ai_harness.modules import probe
 
