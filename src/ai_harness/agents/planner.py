@@ -132,6 +132,11 @@ def infer_stack(prompt: str) -> tuple[str, list[WorkUnit]]:
     return DEFAULT_FAMILY[0], _units(DEFAULT_FAMILY[1], prompt)
 
 
+def _cap(items):
+    """No cap by default; `HARNESS_MAX_UNITS` exists for an operator who wants one."""
+    return list(items) if MAX_UNITS <= 0 else list(items)[:MAX_UNITS]
+
+
 def _clean(path: str, index: int) -> str:
     name = re.sub(r"[^\w./-]", "", str(path or "")).strip("./")
     return name or f"file-{index + 1}.txt"
@@ -159,9 +164,9 @@ def parse(raw: str, prompt: str) -> tuple[str, list[WorkUnit], list[str]]:
         try:
             data = json.loads(raw[start : end + 1])
             objective = str(data.get("objective") or prompt)[:300]
-            files = [_clean(f, i) for i, f in enumerate(data.get("files") or [])][:MAX_UNITS]
+            files = _cap([_clean(f, i) for i, f in enumerate(data.get("files") or [])])
             questions = [str(q)[:160] for q in (data.get("research_questions") or [])][:3]
-            for index, item in enumerate((data.get("work_units") or [])[:MAX_UNITS]):
+            for index, item in enumerate(_cap(data.get("work_units") or [])):
                 role = str(item.get("role") or "general")
                 units.append(
                     WorkUnit(
@@ -195,7 +200,7 @@ def parse(raw: str, prompt: str) -> tuple[str, list[WorkUnit], list[str]]:
     # while the verifier correctly calls it dead. The planner is not asked to be
     # exhaustive, so the harness closes the gap instead of shipping the hole.
     for path in declared:
-        if path in assigned or len(units) >= MAX_UNITS:
+        if path in assigned or (MAX_UNITS > 0 and len(units) >= MAX_UNITS):
             continue
         units.append(
             WorkUnit(

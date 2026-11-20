@@ -22,7 +22,9 @@ Reply with ONLY this JSON, no prose, no fences:
  "research_questions":["a question worth searching the web for","..."]}
 
 Rules:
-- 3 to 6 files, real paths with the correct extensions. Nested folders are fine.
+- As many files as the task genuinely needs, real paths with the correct extensions.
+  There is no fixed file count. Do not pad the plan with empty files, and do not force a
+  multi-file site into one file. Nested folders are fine.
 - Decompose by concern, not by paragraph: entry wiring, root component, stylesheet, and one
   component per section the request names (hero, about, projects, contact). A single file is
   for a small page, not a full site.
@@ -144,6 +146,10 @@ Peer files already written — keep their ids, classes, imports and handlers con
 {progress}
 
 Write the complete file. No TODOs, no placeholders, no commentary outside the file.
+The plan is a starting point, not a ceiling: if this file needs a sibling (a component,
+hook, stylesheet or asset), emit it as its own file section using the same marker format
+shown below. You may create as many files as the work needs; the harness registers and
+verifies every one.
 
 Output format, exactly:
 <<<FILE {file}>>>

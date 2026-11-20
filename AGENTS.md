@@ -80,6 +80,9 @@ Each line exists because something went wrong without it.
 15. Usage is reconstructed from `usage` events whenever a run is restored; the JSON
     ledger is a cache. A resume that starts from an empty usage map makes a 78k-token
     build read as a 1k chat. Same for files: the workspace is the record.
+16. The plan is a starting point, not a ceiling: the planner may name as many files as
+    the work needs (`HARNESS_MAX_UNITS=0` means no cap), and an author may emit extra
+    `<<<FILE path>>>` sections. Never reintroduce a fixed file count as a "scaffold".
 15. A revision first tries `modules/agent_loop.py`: read, a targeted edit, check, repeat,
     with a check-gated `done`. The whole-file rewrite is the fallback when a model cannot
     speak the tool protocol, never the first choice. The prompt is `prompts.AGENT_REPAIR`,

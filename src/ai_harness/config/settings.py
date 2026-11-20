@@ -90,7 +90,9 @@ HOST = os.getenv("HARNESS_HOST", "127.0.0.1")
 PORT = _int("HARNESS_PORT", 8000)
 
 # Reasoning and execution limits
-MAX_UNITS = max(1, _int("HARNESS_MAX_UNITS", 8))
+# 0 means no cap: the planner names as many files as the work needs, and an agent may
+# add more behind `<<<FILE path>>>`. The file count is not a design constraint.
+MAX_UNITS = max(0, _int("HARNESS_MAX_UNITS", 0))
 MAX_RESEARCH_QUERIES = _int("HARNESS_MAX_RESEARCH_QUERIES", 3)
 MAX_RESEARCH_PAGES = _int("HARNESS_MAX_RESEARCH_PAGES", 2)
 REASONING_WORDS = _int("HARNESS_REASONING_WORDS", 700)
