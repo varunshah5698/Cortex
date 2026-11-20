@@ -51,7 +51,10 @@ def test_a_deep_build_is_critiqued_by_another_specialist_before_code(monkeypatch
     critic_calls = [agent for agent, system in seen if "Attack the plan" in system]
     assert critic_calls == ["r1"], "the plan must be attacked by someone other than its author"
 
+    reason_prompt = next(system for _, system in seen if "Think before writing" in system)
     code_prompt = next(system for _, system in seen if "Output format, exactly:" in system)
+    assert "That file's job in the build: the page" in reason_prompt
+    assert "That file's job in the build: the page" in code_prompt
     assert "VERDICT: REVISE" in code_prompt, "the code pass must be grounded in the critique"
 
     assert any(
