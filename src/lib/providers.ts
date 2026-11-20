@@ -116,14 +116,14 @@ export type ServerSpecialist = Omit<Specialist, "apiKey"> & { has_key?: boolean;
 export function loadRoster(): Specialist[] {
   try {
     const raw = localStorage.getItem(ROSTER_KEY);
-    if (!raw) return defaultRoster();
+    if (!raw) return [];
     const parsed = JSON.parse(raw) as (Specialist & { apiKey?: string })[];
-    if (!Array.isArray(parsed) || !parsed.length) return defaultRoster();
+    if (!Array.isArray(parsed) || !parsed.length) return [];
     // Drop keys written by older builds: they belong on the harness now.
     // `apiKey` stays an empty string, not missing: callers read it without a guard.
     return parsed.map(({ id, name, role, kind, baseUrl, model }) => ({ id, name, role, kind, baseUrl, model, apiKey: "" }));
   } catch {
-    return defaultRoster();
+    return [];
   }
 }
 
@@ -150,7 +150,11 @@ function mergeKeys(local: Specialist[], server: ServerSpecialist[]): Specialist[
   // A specialist added in the workshop but not saved into the harness yet stays in the
   // list: hydrating should refresh what the server knows, never delete a fresh entry.
   const known = new Set(merged.map((s) => s.id));
-  for (const draft of local) if (!known.has(draft.id)) merged.push(draft);
+  for (const draft of local) {
+    if (known.has(draft.id)) continue;
+    known.add(draft.id);
+    merged.push(draft);
+  }
   return merged;
 }
 
@@ -174,8 +178,9 @@ export async function hydrateRoster(): Promise<Specialist[]> {
   const server = await readServerRoster();
   if (!server) return loadRoster();  // unreadable: keep what we have
   const local = loadRoster();
-  const known = new Set(server.map((s) => s.id));
-  const merged = [...mergeKeys(local, server), ...local.filter((s) => !known.has(s.id))];
+  // `mergeKeys` already appends local drafts the server does not know; appending them
+  // again here duplicated every draft and made a 3-person team look like 21 cards.
+  const merged = mergeKeys(local, server);
   saveRoster(merged);
   return merged;
 }

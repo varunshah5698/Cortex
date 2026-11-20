@@ -62,11 +62,15 @@ export default function Workshop() {
     hydrateRoster()
       .then((list) => {
         if (!alive) return;
-        lastSaved.current = payloadOf(list);
-        setRoster(list);
+        // A fresh browser must not turn the four starter drafts into four roster rows
+        // every time the workshop opens. Seed them only when the harness has nobody.
+        const next = list.length ? list : defaultRoster();
+        lastSaved.current = list.length ? payloadOf(next) : "";
+        setRoster(next);
       })
       .catch(() => {
         /* harness offline: keep the local copy, and an edit will report the failure */
+        if (alive) setRoster((prev) => (prev.length ? prev : defaultRoster()));
       })
       .finally(() => {
         // Only a hydrated roster may be written back: a stale local copy pushed during
