@@ -106,6 +106,14 @@ disables it.
 temporary tunnel (`modules/cloud.py`, `cloudflared` by default). The app has the run id
 baked in, a path token, and no `/api`; the first request is an approval prompt, and the
 URL expires with `HARNESS_SHARE_TTL`. It never exposes the multi-run preview app.
+The default provider is `cloudflared` (`brew install cloudflared`); set
+`HARNESS_TUNNEL_COMMAND` with a `{url}` placeholder for another tunnel.
+
+**Per-run cloud execution** is a second mode: `HARNESS_RUNNER_MODE=cloud` sends the
+finished workspace to a separately deployed `ai_harness.cloud_runner` service, which
+installs, serves and proxies it on its own public origin. The harness never sends its
+`/api`, roster or keys to that runner. See `docs/cloud-runner.md`; `render.yaml` defines
+both services.
 
 A run is bounded and auditable, not just observable. Every call is priced from a
 model table and charged to the run's ledger; a token or dollar budget stops the run

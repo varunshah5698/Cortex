@@ -151,9 +151,11 @@ CACHE_ENABLED = _bool("HARNESS_CACHE", False)
 CACHE_ENTRIES = _int("HARNESS_CACHE_ENTRIES", 256)
 
 # Transient provider failures (429/5xx/timeouts) are retried; auth errors never are.
-RETRY_ATTEMPTS = _int("HARNESS_RETRY_ATTEMPTS", 3)
-RETRY_BASE_DELAY = _float("HARNESS_RETRY_DELAY", 0.75)
-RETRY_MAX_DELAY = _float("HARNESS_RETRY_MAX_DELAY", 30.0)
+# Five attempts with 2s, 4s, 8s and 16s waits covers an account rate-limit window;
+# `Retry-After` from the provider is honoured even when it is longer.
+RETRY_ATTEMPTS = _int("HARNESS_RETRY_ATTEMPTS", 5)
+RETRY_BASE_DELAY = _float("HARNESS_RETRY_DELAY", 2.0)
+RETRY_MAX_DELAY = _float("HARNESS_RETRY_MAX_DELAY", 60.0)
 
 # Ask OpenAI-compatible providers for JSON mode on structured calls. Providers that
 # reject the field are retried without it (see modules/adapters.py).
@@ -161,6 +163,11 @@ JSON_MODE = _bool("HARNESS_JSON_MODE", True)
 
 # Provider rate limiting: requests per minute per (base URL, model). 0 disables it.
 PROVIDER_RATE_LIMIT = _int("HARNESS_RATE_LIMIT_PER_MIN", 60)
+
+# In-flight requests per (base URL, model). Gateway accounts such as River publish no
+# fixed allowance and answer 429 when concurrency is too high; 1 serializes each model.
+# 0 leaves concurrency to the provider.
+PROVIDER_CONCURRENCY = max(0, _int("HARNESS_PROVIDER_CONCURRENCY", 0))
 
 # ---------- HTTP surface ----------
 
@@ -219,6 +226,15 @@ NODE_BIN = os.getenv("HARNESS_NODE", "node").strip() or "node"
 TUNNEL_COMMAND = os.getenv("HARNESS_TUNNEL_COMMAND", "").strip()
 TUNNEL_TIMEOUT = _float("HARNESS_TUNNEL_TIMEOUT", 30.0)
 SHARE_TTL = _float("HARNESS_SHARE_TTL", 900.0)
+
+# Per-run cloud execution. `HARNESS_RUNNER_MODE=cloud` sends the workspace to a separately
+# deployed `ai_harness.cloud_runner` service, which installs, serves and proxies it. The
+# token is server-to-server only; the browser receives the run's capability URL, never
+# this token. The URL and token are absent locally, so local builds are unaffected.
+RUNNER_MODE = os.getenv("HARNESS_RUNNER_MODE", "local").strip().lower()
+CLOUD_RUNNER_URL = os.getenv("HARNESS_CLOUD_RUNNER_URL", "").strip().rstrip("/")
+CLOUD_RUNNER_TOKEN = os.getenv("HARNESS_CLOUD_RUNNER_TOKEN", "").strip()
+CLOUD_RUNNER_TIMEOUT = max(10.0, _float("HARNESS_CLOUD_RUNNER_TIMEOUT", 120.0))
 
 TOKEN_FILE = Path(os.getenv("HARNESS_TOKEN_FILE", WORKSPACE_ROOT / ".harness-token"))
 ROSTER_FILE = Path(os.getenv("HARNESS_ROSTER_FILE", WORKSPACE_ROOT / ".harness-roster.json"))

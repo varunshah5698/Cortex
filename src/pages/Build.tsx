@@ -509,6 +509,15 @@ export default function Build() {
     };
   }, [runId]);
 
+  // A local run is reached through the preview proxy with its per-run token; a cloud run
+  // already has a public capability URL of its own and is embedded directly.
+  const servedUrl = (id: string): string => {
+    if (service?.state === "ready" && service.url && (service.remote || service.token)) {
+      return service.remote ? service.url : liveUrl(id, service.token ?? "");
+    }
+    return previewUrl(id);
+  };
+
   // Poll while the service is doing something, and for a short window after ready
   // while the automatic browser check is still in flight. After that, `ready` is final
   // and the Browser button is the way to ask again.
@@ -756,39 +765,43 @@ export default function Build() {
                         >
                           <Icon name="eye" size={11} /> {browserBusy ? "Checking…" : "Browser"}
                         </button>
-                        {share?.state === "ready" && share.url ? (
-                          <button
-                            className="pv-btn"
-                            disabled={shareBusy}
-                            onClick={() => void unshareRun(runId)}
-                            title={`Public until ${share.expires_at ?? "stopped"} · ${share.url}`}
-                          >
-                            <Icon name="link" size={11} /> Stop share
-                          </button>
-                        ) : share?.state === "needs_approval" ? (
-                          <button
-                            className="pv-btn"
-                            disabled={shareBusy}
-                            onClick={() => void shareRun(runId, true)}
-                            title="Publishes this one run on a public URL until stopped or the TTL expires"
-                          >
-                            <Icon name="globe" size={11} /> Approve &amp; share
-                          </button>
-                        ) : (
-                          <button
-                            className="pv-btn"
-                            disabled={shareBusy || serviceState !== "ready"}
-                            onClick={() => void shareRun(runId)}
-                            title="Publish this one run through a temporary public tunnel"
-                          >
-                            <Icon name="globe" size={11} /> {shareBusy ? "Sharing…" : "Share"}
-                          </button>
+                        {!service?.remote && (
+                          <>
+                            {share?.state === "ready" && share.url ? (
+                              <button
+                                className="pv-btn"
+                                disabled={shareBusy}
+                                onClick={() => void unshareRun(runId)}
+                                title={`Public until ${share.expires_at ?? "stopped"} · ${share.url}`}
+                              >
+                                <Icon name="link" size={11} /> Stop share
+                              </button>
+                            ) : share?.state === "needs_approval" ? (
+                              <button
+                                className="pv-btn"
+                                disabled={shareBusy}
+                                onClick={() => void shareRun(runId, true)}
+                                title="Publishes this one run on a public URL until stopped or the TTL expires"
+                              >
+                                <Icon name="globe" size={11} /> Approve &amp; share
+                              </button>
+                            ) : (
+                              <button
+                                className="pv-btn"
+                                disabled={shareBusy || serviceState !== "ready"}
+                                onClick={() => void shareRun(runId)}
+                                title="Publish this one run through a temporary public tunnel"
+                              >
+                                <Icon name="globe" size={11} /> {shareBusy ? "Sharing…" : "Share"}
+                              </button>
+                            )}
+                          </>
                         )}
                         <button onClick={() => setFrame((v) => v + 1)} title="Reload">
                           <Icon name="history" size={13} />
                         </button>
                         <a
-                          href={service?.state === "ready" && service.token ? liveUrl(runId, service.token) : previewUrl(runId)}
+                          href={servedUrl(runId)}
                           target="_blank"
                           rel="noreferrer"
                           title="Open in a tab"
@@ -814,7 +827,7 @@ export default function Build() {
                             : `${service.browser.errors} issue(s) · ${service.browser.issues[0]?.detail ?? "see runtime"}`}
                       </div>
                     )}
-                    {share?.state === "ready" && share.url && (
+                    {!service?.remote && share?.state === "ready" && share.url && (
                       <div className="pv-detail">
                         Public: <a href={share.url} target="_blank" rel="noreferrer">{share.url}</a>
                         {share.expires_at ? ` · expires ${new Date(share.expires_at).toLocaleTimeString()}` : ""}
@@ -844,7 +857,7 @@ export default function Build() {
                       key={frame}
                       title="preview"
                       sandbox="allow-scripts allow-forms allow-popups allow-modals"
-                      src={service?.state === "ready" && service.token ? liveUrl(runId, service.token) : previewUrl(runId)}
+                      src={servedUrl(runId)}
                     />
                     {service && (
                       <div className="pv-log">

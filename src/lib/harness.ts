@@ -305,6 +305,10 @@ export type RunService = {
   sandbox?: string;
   /** The last browser verdict, when the served page has been opened in Chrome. */
   browser?: BrowserReport | null;
+  /** True when the run executes on the separately deployed cloud runner. */
+  remote?: boolean;
+  /** Seconds until a cloud runner removes the run. */
+  expires_in?: number;
   logs: string[];
 };
 

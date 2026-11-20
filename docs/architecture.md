@@ -230,6 +230,16 @@ with `stage: "browser"` and is stored as `run.browser`; it is a post-serve senso
 never flips the pipeline's `done`. A machine without Chrome reports `skipped`, not a
 false pass.
 
+### Per-run cloud execution
+
+`HARNESS_RUNNER_MODE=cloud` points `POST /api/run/<id>/serve` at a separately deployed
+`ai_harness.cloud_runner` service (`docs/cloud-runner.md`). The harness sends the finished
+workspace as a tar.gz to `POST /runs` with a server-to-server token; the runner extracts it
+into a private directory, calls the same `modules/runner.py` pipeline, and exposes
+`/runs/<id>/<secret>/…` on its own origin. The browser embeds that capability URL directly;
+the harness never exposes its `/api` or its keys to the runner. A run is TTL-bounded and
+removed on stop. The local runner remains the default when no runner URL is configured.
+
 ### Public shares
 
 `POST /api/run/<id>/share` publishes **one** ready run through `share.py`, a separate app

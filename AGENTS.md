@@ -91,6 +91,10 @@ Each line exists because something went wrong without it.
 18. A browser check is a post-serve sensor: it runs only after an approved preview is
     `ready`, reports through `run.browser` and a `verify` event, and never changes a
     run's terminal `done`.
+19. Cloud execution is a separate service (`ai_harness/cloud_runner.py`), not a second
+    route on `/api`. The harness submits a tar.gz with a server-to-server token; the
+    runner has no roster, provider keys or `/api`, and returns a per-run capability URL.
+    A new cloud provider must keep that boundary rather than exposing the harness.
 
 ## Before you open a PR
 

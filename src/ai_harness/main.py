@@ -43,8 +43,10 @@ from .config.settings import (
     NATIVE_TOOLS,
     ORIGINS,
     PUBLIC_ORIGIN,
+    REQUIRE_APPROVAL,
     RETRY_ATTEMPTS,
     ROSTER_FILE,
+    RUNNER_MODE,
     api_token,
     provider_key,
 )
@@ -52,6 +54,7 @@ from .core.harness import Harness, HarnessBusy
 from .core.state import RunState, now_iso
 from .models import Specialist
 from .modules import browser, budget, cloud, llm, permissions, probe, receipt, runner
+from .modules import cloud_runner as remote_runner
 from .modules.cache import CACHE
 from .modules.roster import RosterStore
 from .utils.validators import UnsafePath
@@ -73,6 +76,15 @@ ROSTER = RosterStore(ROSTER_FILE, KEYS_FILE)
 # Browser checks run after the server answers, in the background. Keep a reference so
 # the task is not collected mid-check, and cancel it on shutdown with the services.
 _browser_tasks: set[asyncio.Task] = set()
+
+# Runs executing on the separately deployed cloud runner. They are duck-typed like a
+# local `runner.Service`, so the UI and the ledger read the same payload.
+_remote_runs: dict[str, remote_runner.RemoteService] = {}
+
+
+def _cloud_mode() -> bool:
+    return RUNNER_MODE == "cloud" and remote_runner.available()
+
 
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 
@@ -621,9 +633,11 @@ async def _browser_after_ready(run_id: str) -> None:
     """Follow a starting service and check it once it answers. Never blocks the API."""
     try:
         for _ in range(240):
-            service = runner.get(run_id)
+            service = runner.get(run_id) or _remote_runs.get(run_id)
             if service is None:
                 return
+            if isinstance(service, remote_runner.RemoteService):
+                await service.refresh()
             if service.state == "ready":
                 run = harness.get(run_id)
                 if run is not None:
@@ -672,6 +686,44 @@ async def serve_start(run_id: str, restart: bool = False, approve: bool = False)
         # Building a half-written tree is how an empty package.json became a "failed
         # build". The preview is a verdict on finished work, not a progress bar.
         raise HTTPException(409, "the run is still writing files; wait for it to finish before building")
+
+    if _cloud_mode():
+        remote = _remote_runs.get(run_id)
+        if remote is not None and not restart:
+            return remote.as_dict()
+        if remote is not None:
+            await remote.stop()
+            _remote_runs.pop(run_id, None)
+        if REQUIRE_APPROVAL and not approve:
+            payload = _service_payload(None, run_id, run.browser if run is not None else None)
+            payload.update(
+                {
+                    "state": "needs_approval",
+                    "kind": "cloud",
+                    "remote": True,
+                    "detail": "approval required · submit this run to the cloud runner",
+                    "pending": [f"cloud runner: {run_id}"],
+                    "detail_lines": [
+                        "upload the run workspace to the separate runner service",
+                        "install and build the dependencies its manifest declares",
+                        "serve it behind a per-run capability URL",
+                    ],
+                }
+            )
+            return payload
+        try:
+            remote = await remote_runner.start(run_id, workspace)
+        except remote_runner.CloudRunnerError as exc:
+            raise HTTPException(409, str(exc)) from None
+        _remote_runs[run_id] = remote
+        if run is not None:
+            _record_build(run, remote)
+            if BROWSER_CHECK:
+                task = asyncio.create_task(_browser_after_ready(run_id))
+                _browser_tasks.add(task)
+                task.add_done_callback(_browser_tasks.discard)
+        return remote.as_dict()
+
     service = await runner.start(
         run_id,
         workspace,
@@ -690,8 +742,23 @@ async def serve_start(run_id: str, restart: bool = False, approve: bool = False)
 
 @app.get("/api/run/{run_id}/serve")
 async def serve_status(run_id: str) -> dict:
-    service = runner.get(run_id)
     run = harness.get(run_id)
+    if _cloud_mode():
+        remote = _remote_runs.get(run_id)
+        if remote is None:
+            remote = await remote_runner.status(run_id)
+            if remote is not None:
+                _remote_runs[run_id] = remote
+        if remote is not None:
+            try:
+                await remote.refresh()
+            except remote_runner.CloudRunnerError as exc:
+                return {**remote.as_dict(), "detail": str(exc)}
+            if run is not None and remote.state != (run.build or {}).get("state"):
+                _record_build(run, remote)
+            return remote.as_dict()
+        return _service_payload(None, run_id, run.browser if run is not None else None)
+    service = runner.get(run_id)
     # The state a poll sees is more honest than the one the start returned: installing and
     # building settle later, so the ledger follows them instead of freezing on "detecting".
     if service is not None and run is not None and service.state != (run.build or {}).get("state"):
@@ -706,12 +773,18 @@ async def serve_stop(run_id: str) -> dict:
     # would leave a public link pointing at a dead port.
     if cloud.get(run_id) is not None:
         await cloud.stop(run_id, reason="the preview stopped")
+    remote = _remote_runs.pop(run_id, None)
+    if remote is not None:
+        await remote.stop()
+        return remote.as_dict()
     return _service_payload(await runner.stop(run_id), run_id, run.browser if run is not None else None)
 
 
 @app.post("/api/run/{run_id}/share")
 async def share_start(run_id: str, approve: bool = False) -> dict:
     """Publish one ready run through a one-run origin. Approval is not a formality."""
+    if run_id in _remote_runs:
+        raise HTTPException(409, "this run is already public through the cloud runner")
     try:
         shared = await cloud.start(run_id, approved=approve)
     except cloud.TunnelUnavailable as exc:
@@ -745,6 +818,7 @@ async def shutdown() -> None:
         task.cancel()
     await asyncio.gather(*_browser_tasks, return_exceptions=True)
     _browser_tasks.clear()
+    await remote_runner.stop_all(_remote_runs)
     await cloud.stop_all()
     await runner.stop_all()
     await preview.stop_background()
