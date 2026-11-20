@@ -126,11 +126,12 @@ class Orchestrator:
             receipt.write(self.run)
             memory.append(self.run, f"stopped short — {failed} verification error(s)")
             event_log(self.run.run_id, "verification-failed", errors=failed, issues=report.get("issues", [])[:12])
-            cloud_sync.finish(
+            await asyncio.to_thread(
+                cloud_sync.finish,
                 self.run.run_id,
                 "blocked",
-                message=f"{failed} verification error(s) still fail after repair",
-                errors=failed,
+                f"{failed} verification error(s) still fail after repair",
+                failed,
             )
             await self.run.emit(
                 {
@@ -165,11 +166,12 @@ class Orchestrator:
             }
         )
         event_log(self.run.run_id, "done", files=len(self.run.files))
-        cloud_sync.finish(
+        await asyncio.to_thread(
+            cloud_sync.finish,
             self.run.run_id,
             "done",
-            message=f"{len(self.run.files)} file(s) verified",
-            errors=0,
+            f"{len(self.run.files)} file(s) verified",
+            0,
         )
 
     async def run_all(self) -> None:
@@ -182,7 +184,7 @@ class Orchestrator:
             event_log(self.run.run_id, "start", prompt=self.run.prompt, depth=self.run.depth)
             # Best-effort mirror: a Convex outage must not fail a run that is already
             # executing on disk. See modules/cloud_sync.py.
-            cloud_sync.start(self.run.run_id, self.run.prompt, self.run.depth)
+            await asyncio.to_thread(cloud_sync.start, self.run.run_id, self.run.prompt, self.run.depth)
 
             # A local daemon that is not running cannot write a file; fail before the
             # planner spends three minutes discovering that. Then load the model once,

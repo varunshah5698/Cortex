@@ -1,6 +1,6 @@
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 
 /**
  * The HTTP surface, served at the deployment's `.convex.site` origin.
@@ -55,7 +55,7 @@ router.route({
     }
     if (!body.runId || !body.type) return json({ error: "runId and type are required" }, 400);
 
-    const seq = await ctx.runMutation(api.runs.appendEventBySecret, {
+    const seq = await ctx.runMutation(internal.runs.appendEventBySecret, {
       secret: process.env.CONVEX_HARNESS_SECRET ?? "",
       runId: body.runId,
       type: body.type,
@@ -79,7 +79,7 @@ router.route({
     }
     if (!body.runId || !body.status) return json({ error: "runId and status are required" }, 400);
 
-    await ctx.runMutation(api.runs.finishBySecret, {
+    await ctx.runMutation(internal.runs.finishBySecret, {
       secret: process.env.CONVEX_HARNESS_SECRET ?? "",
       runId: body.runId,
       status: body.status as "running" | "done" | "blocked" | "failed" | "cancelled",
@@ -104,7 +104,7 @@ router.route({
     }
     if (!body.text) return json({ error: "text is required" }, 400);
 
-    const id = await ctx.runMutation(api.lessons.recordBySecret, {
+    const id = await ctx.runMutation(internal.lessons.recordBySecret, {
       secret: process.env.CONVEX_HARNESS_SECRET ?? "",
       text: body.text,
       code: body.code,
