@@ -31,6 +31,9 @@ Rules:
 - A Vite/React, Vue or Svelte tree needs `index.html` at the root and its entry file must load
   the source entry (`/src/main.tsx`, `/src/main.ts`). Do not name Next.js (`next dev`) unless
   you also plan its `app/` or `pages/` tree — a Vite entry with a Next manifest cannot build.
+- A visual page needs a stylesheet in the plan (`src/index.css` or the component's own CSS)
+  and the entry must import it. Inline-only styling is the last resort, not the default;
+  the harness already provides a baseline, so extend it instead of undoing it.
 - The files must fit together: the entry file imports the others by those exact paths.
 - Roles: markup, styling and UI are frontend; logic, data, entry wiring and manifests are backend.
 - A React request gets .tsx/.jsx, a Python request gets .py, a CLI gets .ts or .go — match the request.
@@ -123,6 +126,9 @@ That file's job in the build: {objective}
 Your own plan, which you must follow:
 {reasoning}
 
+For a page, build the look on purpose: a coherent type scale, spacing rhythm, colour and
+states. Use the planned stylesheet; inline-only styling is a fallback for a one-off.
+
 The reviewer's critique of that plan — treat a REVISE finding as a requirement, not a
 suggestion, and correct the plan before you write:
 {critique}
@@ -188,6 +194,9 @@ REVIEW = """You are the reviewer. The request was: "{prompt}"
 Read every file and mentally run what was built: the entry point, the imports, the wiring, the
 configuration, and whatever is missing for the stack that was chosen (markup and handlers for a
 web page, headers and routing for a service, argv and exit codes for a CLI).
+
+Judge the result as a person would use it. For a page, also judge hierarchy, spacing,
+colour and responsiveness: an unstyled or inline-only page is a finding, not a pass.
 
 Reply with 3-5 numbered findings, each naming the FILE and the exact problem, most severe first.
 If it is genuinely correct, reply with exactly: APPROVED"""

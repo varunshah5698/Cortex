@@ -89,6 +89,9 @@ const seed = (roster: Specialist[]): Record<string, AgentState> =>
 
 const base = (path: string) => path.split("/").pop() ?? path;
 
+/** A preview the operator approved once is restored after a harness restart. */
+const approvedKey = (runId: string) => `cortex:approved:${runId}`;
+
 export default function Build() {
   // Server truth on mount: `has_key`/`configured` live there, so a browser that never
   // opened the workshop still starts a run with the right team — and only that team.
@@ -543,6 +546,15 @@ export default function Build() {
     };
   }, [runId, serviceState, browserPending]);
 
+  // A preview the operator approved once is restored after a harness restart. The
+  // approval is per run and kept in this browser; Stop removes it.
+  useEffect(() => {
+    if (!runId || running || phase !== "done" || serviceState) return;
+    if (localStorage.getItem(approvedKey(runId)) !== "1") return;
+    setNotice("Restoring the preview you approved for this run.");
+    void boot(runId, false, true);
+  }, [runId, running, phase, serviceState, boot]);
+
   // A service that just became ready means a fresh document to load.
   useEffect(() => {
     if (serviceState === "ready") setFrame((v) => v + 1);
@@ -727,7 +739,10 @@ export default function Build() {
                         {serviceState === "needs_approval" ? (
                           <button
                             className="pv-btn"
-                            onClick={() => void boot(runId, false, true)}
+                            onClick={() => {
+                              localStorage.setItem(approvedKey(runId), "1");
+                              void boot(runId, false, true);
+                            }}
                             title={`Install and build code the team wrote: ${service?.pending?.join(", ") ?? ""}`}
                           >
                             <Icon name="check" size={11} /> Approve &amp; run
@@ -735,7 +750,10 @@ export default function Build() {
                         ) : serviceState && SERVICE_BUSY.includes(serviceState) ? (
                           <button
                             className="pv-btn"
-                            onClick={() => void stopService(runId).then(setService).catch(() => {})}
+                            onClick={() => {
+                              localStorage.removeItem(approvedKey(runId));
+                              void stopService(runId).then(setService).catch(() => {});
+                            }}
                             title="Stop the server"
                           >
                             <Icon name="stop" size={11} /> Stop

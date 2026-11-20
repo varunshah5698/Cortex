@@ -20,14 +20,19 @@ from __future__ import annotations
 
 import asyncio
 import re
+import subprocess
 from pathlib import Path
 
+from ..config.settings import ROOT
 from . import permissions
 
 # `src/App.tsx(12,7): error TS2322: Type 'string' is not assignable to type 'number'.`
 TS_ERROR = re.compile(r"^(?P<file>[^\s(]+)\((?P<line>\d+),(?P<col>\d+)\): error (?P<code>TS\d+): (?P<detail>.+)$")
 TYPECHECK_TIMEOUT = 120.0
 TS_BUILDS = ("node_modules/typescript/bin/tsc", "node_modules/.bin/tsc")
+# The harness's own esbuild (a Vite dependency) parses TS/JSX without the run's install.
+ESBUILD_BUILDS = ("node_modules/.bin/esbuild", "node_modules/esbuild/bin/esbuild")
+JS_LOADERS = {".tsx": "tsx", ".jsx": "jsx", ".ts": "ts", ".mts": "ts", ".js": "js", ".mjs": "js"}
 
 
 def python_syntax(path: str, content: str) -> dict | None:
@@ -51,16 +56,58 @@ def python_syntax(path: str, content: str) -> dict | None:
     return None
 
 
+def _esbuild() -> Path | None:
+    for relative in ESBUILD_BUILDS:
+        candidate = ROOT / relative
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def javascript_syntax(path: str, content: str) -> dict | None:
+    """Parse one JS/TS/JSX/TSX file with the harness's esbuild.
+
+    This is the pre-install sensor: `tsc` only exists after a run installs it, but a
+    truncated JSX file is already wrong. esbuild transforms stdin, so nothing executes.
+    """
+    suffix = Path(path).suffix.lower()
+    loader = JS_LOADERS.get(suffix)
+    binary = _esbuild()
+    if not loader or binary is None:
+        return None
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed binary, no shell, bounded input
+            [str(binary), f"--loader={loader}", "--format=esm", "--log-level=error"],
+            input=content,
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode == 0:
+        return None
+    detail = (result.stderr or result.stdout or "does not parse").strip().splitlines()[-1]
+    return {
+        "file": path,
+        "level": "error",
+        "code": "syntax_error",
+        "detail": f"does not parse: {detail[:300]}",
+    }
+
+
 def syntax_issues(files: dict[str, dict]) -> list[dict]:
-    """Every .py file in the tree that does not parse. Deterministic and instant."""
+    """Every .py or JS/TS file in the tree that does not parse. Deterministic."""
     issues: list[dict] = []
     for path, meta in files.items():
-        if not path.endswith(".py"):
+        suffix = Path(path).suffix.lower()
+        if suffix != ".py" and suffix not in JS_LOADERS:
             continue
         content = str(meta.get("content") or "")
         if not content.strip():
             continue  # an empty file is already reported by the structural checks
-        issue = python_syntax(path, content)
+        issue = python_syntax(path, content) if suffix == ".py" else javascript_syntax(path, content)
         if issue:
             issues.append(issue)
     return issues
