@@ -364,7 +364,9 @@ async def repair(run: RunState, agent: Specialist, units: list[WorkUnit], rounds
         report = await verify.run(run, "post-wiring")
         run.verification = report
     for _ in range(max(0, rounds)):
-        if report.get("ok", True):
+        # Fail closed: an absent `ok` is not a pass. See the same rule in
+        # `orchestrator.conclude` and `agent_loop.LoopState.finish`.
+        if report.get("ok") is True:
             return report
         failing = {str(item.get("file") or "") for item in report.get("issues", []) if item.get("level") == "error"}
         targets = [unit for unit in units if unit.file in failing][:3]

@@ -110,11 +110,14 @@ class Orchestrator:
         # give the facts one bounded round of their own, then refuse to report success.
         # `error` is a terminal event, so the UI and the ledger both see a run that stopped
         # short instead of a green run with broken files.
+        # `ok` must be present and true. `report.get("ok", True)` treated a missing key as
+        # clean, so a verification report that never ran (or answered `{"errors": 3}`) was
+        # reported to the operator as a shipped run.
         report = self.run.verification or {}
-        if not report.get("ok", True):
+        if report.get("ok") is not True:
             rounds = REPAIR_ROUNDS * 2 if self.run.depth == "ultra" else REPAIR_ROUNDS
             report = await review.repair(self.run, reviewer_agent, units, rounds=rounds)
-        if not report.get("ok", True):
+        if report.get("ok") is not True:
             memory.learn(report)
             self.run.done = False
             self.persist_metrics()
