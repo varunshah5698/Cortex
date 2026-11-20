@@ -49,6 +49,7 @@ from .config.settings import (
     PUBLIC_ORIGIN,
     REQUIRE_APPROVAL,
     RETRY_ATTEMPTS,
+    ROOT,
     ROSTER_FILE,
     RUNNER_MODE,
     TOKEN_FILE,
@@ -87,6 +88,7 @@ def _migrate_state() -> None:
     for old, new in (
         (WORKSPACE_ROOT / ".harness-token", TOKEN_FILE),
         (WORKSPACE_ROOT / ".harness-roster.json", ROSTER_FILE),
+        (WORKSPACE_ROOT / "memory.md", ROOT / ".harness-memory.md"),
     ):
         if old.resolve() == new.resolve() or new.exists() or not old.exists():
             continue

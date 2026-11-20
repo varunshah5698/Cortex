@@ -17,9 +17,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..config.settings import WORKSPACE_ROOT
+from ..config.settings import ROOT
 
-PATH = Path(WORKSPACE_ROOT) / "memory.md"
+PATH = Path(ROOT) / ".harness-memory.md"
+LESSONS = Path(ROOT) / ".harness-lessons.md"
 MAX_CHARS = 20_000
 KEEP_SECTIONS = 40
 PROMPT_CHARS = 1600
@@ -39,6 +40,63 @@ def load(chars: int = PROMPT_CHARS) -> str:
     tail = text[-chars:]
     cut = tail.find("\n## ")
     return tail[cut + 1 :] if cut != -1 else tail
+
+
+# A failure code is a durable rule, not a sentence about one file. These are the
+# lessons a future planner/reasoner can act on; they are injected into the prompts.
+LESSON_RULES = {
+    "missing_id": "Declare every id in the markup before any script queries it.",
+    "missing_asset": "Only link or import assets the tree actually writes.",
+    "empty": "Write every file the plan declares; an empty scaffold is unfinished.",
+    "invalid_json": "Every JSON file must parse before the run can be done.",
+    "unbalanced_braces": "Balance braces; the file must parse.",
+    "unresolved_import": "Every relative import must resolve to a file this run wrote.",
+    "manifest_mismatch": "The manifest's scripts and dependencies must match the tree.",
+    "missing_entry": "A Vite tree needs index.html that loads its entry module.",
+    "stray_marker": "Never let a file marker or fence leak into the file body.",
+    "syntax_error": "The file must parse under its own language before it ships.",
+    "placeholder": "Ship real content, not a TODO/placeholder.",
+    "unloaded_script": "Load every script that drives the markup.",
+    "not_html": "A page needs a real html/body document.",
+    "browser": "The served page must mount, load its assets, and have no console error.",
+}
+
+
+def learn(report: dict | None) -> list[str]:
+    """Turn the failures of one run into durable rules. Idempotent, never raises."""
+    issues = [item for item in (report or {}).get("issues") or [] if isinstance(item, dict)]
+    if not issues:
+        return []
+    wanted: list[str] = []
+    for issue in issues:
+        rule = LESSON_RULES.get(str(issue.get("code") or ""))
+        if rule and rule not in wanted:
+            wanted.append(rule)
+    if not wanted:
+        return []
+    try:
+        existing = LESSONS.read_text(encoding="utf-8") if LESSONS.is_file() else "# Lessons\n"
+        lines = [line for line in existing.splitlines() if line.startswith("- ")]
+        for rule in wanted:
+            if rule not in lines:
+                lines.append(rule)
+        body = "# Lessons\n\n" + "\n".join(lines[-40:]) + "\n"
+        LESSONS.parent.mkdir(parents=True, exist_ok=True)
+        LESSONS.write_text(body, encoding="utf-8")
+        return wanted
+    except OSError:
+        return []
+
+
+def lessons(chars: int = 1200) -> str:
+    """The newest durable rules, for a planning or reasoning prompt."""
+    try:
+        text = LESSONS.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    if not text or text == "# Lessons":
+        return ""
+    return text[-chars:]
 
 
 def append(run, verdict: str) -> bool:

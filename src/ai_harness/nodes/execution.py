@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 
 from ..agents import executor
-from ..config.settings import REASONING_CRITIC, REASONING_WORDS
+from ..config.settings import AGENT_STEPS, REASONING_CRITIC, REASONING_WORDS
 from ..core.state import RunState
 from ..models import Specialist, WorkUnit
-from ..modules import context, llm, progress, prompts, protected, thrash, tool_log
+from ..modules import agent_loop, context, llm, memory, progress, prompts, protected, thrash, tool_log
+from . import verify
 
 
 class FileSink:
@@ -182,6 +183,7 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
                         prompt=run.prompt,
                         contracts=peers,
                         notes=research,
+                        lessons=memory.lessons(),
                         words=REASONING_WORDS * 2 if run.depth == "ultra" else REASONING_WORDS,
                     ),
                 },
@@ -267,6 +269,7 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
                         or "(no reviewer pass for this run)",
                         contracts=peers,
                         peer_files=context.files_context(run.files, exclude=unit.file),
+                        lessons=memory.lessons(),
                         progress=progress.orient(run),
                     ),
                 },
@@ -286,6 +289,33 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
             )
             await run.emit({"type": "status", "agent": agent.id, "status": "error"})
             return
+
+        if run.depth == "ultra":
+            # Ultra does not wait for the end-of-run review: the freshly written file is
+            # checked now, and its author gets a bounded tool loop to fix it while the
+            # file is still the thing they are thinking about.
+            immediate = verify.check(run.files, [unit.file])
+            if not immediate.get("ok", True):
+                await run.emit(
+                    {
+                        "type": "message",
+                        "from": "verify",
+                        "text": f"{unit.file} failed its first check — repairing before the next file.",
+                        "kind": "review",
+                    }
+                )
+
+                async def _unit_check() -> dict:
+                    return verify.check(run.files, [unit.file])
+
+                await agent_loop.repair(
+                    run,
+                    agent,
+                    unit.file,
+                    verify.as_findings(immediate),
+                    _unit_check,
+                    max_steps=AGENT_STEPS,
+                )
 
         lines = sum(run.files[path]["content"].count("\n") + 1 for path in shipped)
         unit.status = "done"

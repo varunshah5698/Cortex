@@ -23,3 +23,4 @@ def isolate_project_files(tmp_path, monkeypatch):
     monkeypatch.setattr(failures, "LOG", tmp_path / "failures.md")
     monkeypatch.setattr(failures, "REGRESSIONS", tmp_path / "regressions.jsonl")
     monkeypatch.setattr(memory, "PATH", tmp_path / "memory.md")
+    monkeypatch.setattr(memory, "LESSONS", tmp_path / "lessons.md")

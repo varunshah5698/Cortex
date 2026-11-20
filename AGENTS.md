@@ -87,6 +87,11 @@ Each line exists because something went wrong without it.
 17. Accounts, sessions, the API token and the roster live outside `workspace/`; a run
     owns its workspace, not the operator's login. Migrate legacy paths once, never
     recreate them per run.
+18. A verification failure becomes a durable lesson (`memory.learn`) and is injected into
+    the planner, the per-file reasoning and the code prompt. A fix that lives only in a
+    transcript is a bug that will return.
+19. Ultra checks each file as it lands (`verify.check`) and gives its author a bounded
+    tool loop before the next file. Do not move that check back to the end of the run.
 15. A revision first tries `modules/agent_loop.py`: read, a targeted edit, check, repeat,
     with a check-gated `done`. The whole-file rewrite is the fallback when a model cannot
     speak the tool protocol, never the first choice. The prompt is `prompts.AGENT_REPAIR`,

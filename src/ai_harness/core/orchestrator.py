@@ -72,6 +72,7 @@ class Orchestrator:
             rounds = REPAIR_ROUNDS * 2 if self.run.depth == "ultra" else REPAIR_ROUNDS
             report = await review.repair(self.run, reviewer_agent, units, rounds=rounds)
         if not report.get("ok", True):
+            memory.learn(report)
             self.run.done = False
             self.persist_metrics()
             failed = report.get("errors", 0)

@@ -10,7 +10,7 @@ from ..agents import executor, reviewer
 from ..config.settings import AGENT_LOOP, AGENT_STEPS
 from ..core.state import RunState
 from ..models import Specialist, WorkUnit
-from ..modules import agent_loop, context, llm, progress, prompts, thrash
+from ..modules import agent_loop, context, llm, memory, progress, prompts, thrash
 from ..nodes import execution, verify
 
 
@@ -36,6 +36,8 @@ async def run(run: RunState, agent: Specialist, units: list[WorkUnit]) -> str:
 
     # A deterministic sensor first: facts the reviewer must not be able to miss.
     checks = await verify.run(run, "post-build")
+    memory.learn(checks)
+    memory.learn(getattr(run, "browser", None))
     browser = _browser_findings(run)
     try:
         findings, usage = await reviewer.review(
@@ -467,6 +469,7 @@ async def revise(
                         critique=findings[:700],
                         contracts=run.contracts.get(author.id, ""),
                         peer_files=context.files_context(run.files, exclude=unit.file),
+                        lessons=memory.lessons(),
                         progress=progress.orient(run),
                     ),
                 },

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 from ..agents import planner as planner_agent
+from ..config.settings import PLAN_SECONDS
 from ..core.state import RunState
 from ..models import Specialist, WorkUnit
-from ..modules import memory, progress, tool_log
+from ..modules import llm, memory, progress, prompts, tool_log
 
 PLAN_FILE = ".harness-plan.json"
 HARNESS_FILES = ("package.json", "index.html", "vite.config.ts", "tsconfig.json")
@@ -148,8 +150,69 @@ async def run(run: RunState, planner: Specialist) -> tuple[list[WorkUnit], list[
     await run.emit({"type": "phase", "phase": "planning"})
     await run.emit({"type": "status", "agent": planner.id, "status": "thinking"})
 
-    objective, units, files, questions, usage = await planner_agent.plan(planner, run.prompt, memory.load())
+    remembered = memory.load()
+    learned = memory.lessons()
+    if learned:
+        remembered = f"{remembered}\n\nDurable lessons:\n{learned}".strip()
+    try:
+        objective, units, files, questions, usage = await asyncio.wait_for(
+            planner_agent.plan(planner, run.prompt, remembered), PLAN_SECONDS
+        )
+    except asyncio.TimeoutError:
+        # The local model can spend minutes on a plan it never returns. The inferred
+        # stack is a working scaffold; the team can still write against it now.
+        objective, units, files, questions = planner_agent.parse("", run.prompt)
+        usage = llm.Usage()
+        await run.emit(
+            {
+                "type": "message",
+                "from": "harness",
+                "kind": "notice",
+                "text": (
+                    f"Planner took more than {PLAN_SECONDS:.0f}s — using the {objective} fallback "
+                    "and starting the room."
+                ),
+            }
+        )
     await run.emit(run.track_usage(planner, "planning", usage))
+
+    if run.depth == "ultra":
+        critic = next((s for s in run.specialists if s.role == "reviewer" and s.id != planner.id), None)
+        critic = critic or next((s for s in run.specialists if s.id != planner.id), planner)
+        plan_json = json.dumps(
+            {
+                "objective": objective,
+                "files": files,
+                "work_units": [
+                    {"title": unit.title, "role": unit.role, "file": unit.file, "objective": unit.objective}
+                    for unit in units
+                ],
+            },
+            indent=2,
+        )
+        try:
+            review, critic_usage = await llm.call(
+                critic,
+                [
+                    {
+                        "role": "system",
+                        "content": prompts.PLAN_CRITIC.format(prompt=run.prompt, plan=plan_json[:6000]),
+                    },
+                    {"role": "user", "content": "Attack the plan."},
+                ],
+            )
+            await run.emit(run.track_usage(critic, "plan-critic", critic_usage))
+            await run.emit({"type": "message", "from": critic.id, "text": review[:700], "kind": "review"})
+            if "REVISE" in review.upper():
+                revised, revised_usage = await planner_agent.plan(
+                    planner,
+                    run.prompt,
+                    f"{remembered}\n\nPlan review findings:\n{review[:2000]}",
+                )
+                await run.emit(run.track_usage(planner, "plan-revision", revised_usage))
+                objective, units, files, questions, _ = revised
+        except llm.ProviderError as exc:
+            await run.emit({"type": "error", "message": str(exc), "agent": critic.id})
 
     # A manifest is boilerplate, not a design decision. The planner naming Next.js for a
     # tree with src/main.tsx is how a correct portfolio became an unbuildable one; the

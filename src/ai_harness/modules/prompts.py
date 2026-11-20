@@ -81,6 +81,9 @@ Peer interfaces you must honour:
 Research notes:
 {notes}
 
+Lessons from earlier runs — apply them unless this request contradicts them:
+{lessons}
+
 Think before writing. Use these stages, each as a heading:
 1. RESTATE — what this file must do, in your own words.
 2. QUESTIONS — what is ambiguous, and how you resolve it yourself.
@@ -97,9 +100,26 @@ Think before writing. Use these stages, each as a heading:
 A good plan names evidence, not adjectives. Be concrete: real ids, classes, functions and
 file paths. No code. Stay under {words} words."""
 
-# A second, adversarial pass over the plan. The generator that wrote the plan is the
-# worst judge of it; this pass exists to make the plan fail on paper before it fails in
-# the browser.
+# The plan itself, before any file exists. Ultra asks a second specialist to find what
+# the planner missed, then gives the planner one revision pass with those findings.
+PLAN_CRITIC = """You are the architecture reviewer. Another planner proposed this tree for:
+"{prompt}"
+
+The plan:
+{plan}
+
+Attack it before any code exists. Check:
+- Does the file set make the request runnable end to end, with the right entry and manifest?
+- Is the tree split by concern, or is one giant file hiding the work?
+- Does every component's contract have a file that provides it, and a file that consumes it?
+- What did the planner leave out that the person will notice immediately?
+
+Reply in under 160 words, exactly:
+VERDICT: SOUND | REVISE
+FINDINGS: numbered, each naming the exact file and the fix."""
+
+# A second, adversarial pass over a per-file plan. The generator that wrote the plan is
+# the worst judge of it; this exists to make the plan fail on paper before the browser.
 REASON_CRITIC = """You are the reviewer. Another specialist planned one file for this request:
 "{prompt}"
 
@@ -142,6 +162,9 @@ Peer interfaces:
 
 Peer files already written — keep their ids, classes, imports and handlers consistent:
 {peer_files}
+
+Lessons from earlier runs — do not repeat a known failure:
+{lessons}
 
 {progress}
 
