@@ -20,7 +20,18 @@ from .budget import BudgetExceeded
 RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504, 529}
 
 # No status available: transport failures, and providers that stream an error event.
-RETRYABLE_HINTS = ("timeout", "timed out", "connect", "reset", "overloaded", "temporarily", "unavailable")
+RETRYABLE_HINTS = (
+    "timeout",
+    "timed out",
+    "connect",
+    "reset",
+    "readerror",
+    "read error",
+    "server disconnected",
+    "overloaded",
+    "temporarily",
+    "unavailable",
+)
 
 FATAL_HINTS = ("invalid api key", "no base url", "refusing", "not found")
 

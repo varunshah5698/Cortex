@@ -197,6 +197,7 @@ def test_retry_classification_tells_weather_from_credentials(tmp_path: Path) -> 
     assert not is_retryable(ProviderError("Ada: HTTP 422 unprocessable", status=422))
     # no status: transport failures and errors streamed mid-response
     assert is_retryable(ProviderError("Ada: ReadTimeout('read timed out')"))
+    assert is_retryable(ProviderError("Ada: ReadError from http://127.0.0.1:11434/v1"))
     assert is_retryable(ProviderError("Ada: ConnectError('connection reset')"))
     assert is_retryable(ProviderError("Ada: overloaded_error"))
     assert not is_retryable(ProviderError("Ada: no base URL or model"))
