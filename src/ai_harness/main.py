@@ -18,7 +18,6 @@ import asyncio
 import json
 import secrets
 import shutil
-import sqlite3
 import time
 from collections import deque
 from pathlib import Path
@@ -33,7 +32,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import paths, preview
-from .auth import AuthError, AuthStore
+from .auth import AuthError, AuthStore, migrate_auth_db
 from .config.settings import (
     AGENT_LOOP,
     AGENT_STEPS,
@@ -96,18 +95,7 @@ def _migrate_state() -> None:
             shutil.copy2(old, new)
         except OSError:
             pass
-    old_auth = WORKSPACE_ROOT / "auth.db"
-    if old_auth.exists() and not AUTH_DB.exists():
-        try:
-            AUTH_DB.parent.mkdir(parents=True, exist_ok=True)
-            source = sqlite3.connect(old_auth)
-            source.execute("VACUUM INTO ?", (str(AUTH_DB),))
-            source.close()
-        except (OSError, sqlite3.Error):
-            try:
-                shutil.copy2(old_auth, AUTH_DB)
-            except OSError:
-                pass
+    migrate_auth_db(WORKSPACE_ROOT / "auth.db", AUTH_DB)
 
 
 _migrate_state()

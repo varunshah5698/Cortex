@@ -42,6 +42,35 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def migrate_auth_db(old: Path, new: Path) -> bool:
+    """Copy accounts and sessions from the old workspace DB, WAL included.
+
+    A plain file copy reads only the main database; a signup that is still in `-wal`
+    disappears. `sqlite3.Connection.backup` reads the committed WAL.
+    """
+    if not old.exists() or not old.stat().st_size:
+        return False
+    try:
+        new.parent.mkdir(parents=True, exist_ok=True)
+        source = sqlite3.connect(old)
+        target = sqlite3.connect(new)
+        try:
+            old_users = source.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+            try:
+                new_users = target.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+            except sqlite3.Error:
+                new_users = 0
+            if not old_users or new_users:
+                return False
+            source.backup(target)
+            return True
+        finally:
+            source.close()
+            target.close()
+    except (OSError, sqlite3.Error):
+        return False
+
+
 class AuthStore:
     def __init__(self, path: Path):
         self.path = Path(path)

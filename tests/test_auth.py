@@ -77,3 +77,22 @@ def test_logout_revokes_the_session(tmp_path: Path, monkeypatch) -> None:
     assert client.post("/api/auth/logout").status_code == 200
     assert client.get("/api/auth/me").status_code == 401
     assert client.get("/api/runs").status_code == 401
+
+
+def test_migration_reads_an_uncheckpointed_wal(tmp_path):
+    import sqlite3
+
+    from ai_harness.auth import migrate_auth_db
+
+    old = tmp_path / "old.db"
+    source = sqlite3.connect(old)
+    source.execute("PRAGMA journal_mode=WAL")
+    source.execute("CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT)")
+    source.execute("INSERT INTO users (id, email) VALUES ('u1', 'one@example.com')")
+    source.commit()  # committed, but the page may still be in old.db-wal
+    new = tmp_path / "new.db"
+    assert migrate_auth_db(old, new) is True
+    source.close()
+    target = sqlite3.connect(new)
+    assert target.execute("SELECT email FROM users").fetchone()[0] == "one@example.com"
+    target.close()
