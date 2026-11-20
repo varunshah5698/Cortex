@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 import { userFor } from "./auth";
 
 /**
@@ -122,13 +122,15 @@ export const events = query({
       .first();
     if (!run || run.userId !== user._id) return [];
 
-    const rows = await ctx.db
+    // The cursor belongs in the index, not after the take: filtering afterwards meant a
+    // run with more than 2000 events returned the first 2000 every time and then discarded
+    // them all, so it could never be resumed past seq 1999.
+    const after = args.after ?? -1;
+    return await ctx.db
       .query("events")
-      .withIndex("by_run_seq", (q) => q.eq("runId", args.runId))
+      .withIndex("by_run_seq", (q) => q.eq("runId", args.runId).gt("seq", after))
       .order("asc")
       .take(2000);
-    const after = args.after ?? -1;
-    return rows.filter((row) => row.seq > after);
   },
 });
 
@@ -142,10 +144,17 @@ function requireSecret(presented: string): void {
   if (!expected || presented !== expected) throw new Error("unauthorized");
 }
 
-export const appendEventBySecret = mutation({
+export const appendEventBySecret = internalMutation({
   args: { secret: v.string(), runId: v.string(), type: v.string(), payload: v.any() },
   handler: async (ctx, args) => {
     requireSecret(args.secret);
+    // A run id is not a capability. The harness may only append to a run that exists, so a
+    // leaked secret cannot inject events into an arbitrary id and corrupt someone's history.
+    const run = await ctx.db
+      .query("runs")
+      .withIndex("by_run", (q) => q.eq("runId", args.runId))
+      .first();
+    if (!run) throw new Error("no such run");
     const last = await ctx.db
       .query("events")
       .withIndex("by_run_seq", (q) => q.eq("runId", args.runId))
@@ -163,7 +172,7 @@ export const appendEventBySecret = mutation({
   },
 });
 
-export const finishBySecret = mutation({
+export const finishBySecret = internalMutation({
   args: {
     secret: v.string(),
     runId: v.string(),

@@ -21,7 +21,22 @@ import httpx
 
 SITE_URL = os.getenv("CONVEX_SITE_URL", "").strip().rstrip("/")
 SECRET = os.getenv("CONVEX_HARNESS_SECRET", "").strip()
-TIMEOUT = float(os.getenv("CONVEX_SYNC_TIMEOUT", "4"))
+
+
+def _timeout() -> float:
+    """A malformed timeout must not stop the harness from importing.
+
+    This is read at import time because `orchestrator` imports this module, so a bare
+    `float(...)` here turned a typo in an env var into a process that will not start —
+    the mirror breaking the thing it is only supposed to observe.
+    """
+    try:
+        return max(0.5, float(os.getenv("CONVEX_SYNC_TIMEOUT", "4")))
+    except (TypeError, ValueError):
+        return 4.0
+
+
+TIMEOUT = _timeout()
 
 
 def enabled() -> bool:
