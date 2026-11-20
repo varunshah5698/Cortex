@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import mimetypes
+import re
 import secrets
 import socket
 from pathlib import Path
@@ -62,12 +63,62 @@ def _hardened(headers: dict) -> dict:
     return headers
 
 
+# A generated page is written as if it were the site root: `/src/styles.css`,
+# `/assets/app.js`, `url(/img/hero.png)`. Served under `/preview/<run>/` those
+# resolve to the preview origin's own root and 404, so the page arrives unstyled
+# and scriptless — the "nothing is working" preview. Rebase them onto the run.
+_ROOT_REF = re.compile(
+    r"""(?P<attr>\b(?:href|src|action|poster|data)\s*=\s*)(?P<q>["'])(?P<url>/[^"'<>]*)(?P=q)""",
+    re.IGNORECASE,
+)
+_CSS_REF = re.compile(r"""url\(\s*(?P<q>["']?)(?P<url>/[^)"']*)(?P=q)\s*\)""", re.IGNORECASE)
+
+
+def _rebase(url: str, prefix: str) -> str:
+    """`/src/app.js` -> `/preview/<run>/src/app.js`, leaving foreign URLs alone."""
+    if url.startswith("//") or url.startswith(prefix):
+        return url
+    return prefix + url.lstrip("/")
+
+
+def _rebase_html(text: str, run_id: str) -> str:
+    prefix = f"/preview/{run_id}/"
+    text = _ROOT_REF.sub(
+        lambda m: f"{m.group('attr')}{m.group('q')}{_rebase(m.group('url'), prefix)}{m.group('q')}", text
+    )
+    return _CSS_REF.sub(lambda m: f"url({m.group('q')}{_rebase(m.group('url'), prefix)}{m.group('q')})", text)
+
+
+def _notice(title: str, detail: str) -> HTMLResponse:
+    """A readable page for the iframe.
+
+    The preview pane embeds this origin directly, so a JSON error body renders as
+    literal `{"detail":"unknown run"}` inside the panel and reads as a broken app.
+    Every non-file answer here is HTML for that reason.
+    """
+    return HTMLResponse(
+        "<!doctype html><body style='font-family:ui-sans-serif;padding:32px;color:#3d3843'>"
+        f"<h3>{title}</h3><p style='color:#6f6879'>{detail}</p></body>",
+        status_code=404,
+        headers=_hardened({}),
+    )
+
+
 @app.get("/preview/{run_id}/{path:path}")
 async def preview(run_id: str, path: str = ""):
     """A run's generated files, static, straight from the workspace."""
-    workspace = _run(run_id)
+    try:
+        workspace = _run(run_id)
+    except HTTPException:
+        return _notice(
+            "This run is not on this harness",
+            f"No workspace for run {run_id}. It belongs to another deployment or was deleted.",
+        )
     if not workspace.exists():
-        raise HTTPException(404, "unknown run")
+        return _notice(
+            "This run is not on this harness",
+            f"No workspace for run {run_id}. It belongs to another deployment or was deleted.",
+        )
     try:
         target = contained(workspace, path or "index.html")
     except UnsafePath:
@@ -87,14 +138,35 @@ async def preview(run_id: str, path: str = ""):
             headers=_hardened({}),
         )
     media_type = _mimetype(target)
+    if media_type in ("text/html", "text/css"):
+        try:
+            text = target.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            raise HTTPException(404, "unreadable file") from None
+        return HTMLResponse(_rebase_html(text, run_id), media_type=media_type, headers=_hardened({}))
     return FileResponse(target, media_type=media_type, headers=_hardened({}))
 
 
+_TYPES = {
+    ".js": "text/javascript",
+    ".mjs": "text/javascript",
+    ".jsx": "text/javascript",
+    ".ts": "text/javascript",
+    ".tsx": "text/javascript",
+    ".css": "text/css",
+    ".map": "application/json",
+    ".json": "application/json",
+    ".svg": "image/svg+xml",
+    ".woff2": "font/woff2",
+}
+
+
 def _mimetype(path: Path) -> str:
-    if path.suffix == ".js":
-        return "text/javascript"
-    if path.suffix == ".css":
-        return "text/css"
+    # A generated Vite tree asks for `/src/main.tsx` and `.mjs` chunks; guessing those
+    # gave `application/octet-stream`, which the browser refuses to execute as a module.
+    known = _TYPES.get(path.suffix.lower())
+    if known:
+        return known
     return mimetypes.guess_type(str(path))[0] or "application/octet-stream"
 
 
@@ -148,7 +220,14 @@ _task: asyncio.Task[None] | None = None
 
 
 def _free(host: str, port: int) -> bool:
+    """Can a server bind here?
+
+    `SO_REUSEADDR` matters: after a restart the previous preview leaves sockets in
+    TIME_WAIT, and a plain bind fails on those even though uvicorn (which sets the
+    option) would bind fine. Without it every restart silently disabled previews.
+    """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             sock.bind((host, port))
             return True

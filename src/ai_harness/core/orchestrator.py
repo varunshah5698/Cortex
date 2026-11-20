@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import traceback
 
 from ..config.settings import REPAIR_ROUNDS
@@ -27,14 +28,48 @@ class Orchestrator:
                 return found
         return self.run.specialists[0]
 
+    def measured_facts(self) -> str:
+        """What the harness actually measured, for the answer to be written from.
+
+        The answer is prose, so it can invent a section or a count. This block is the only
+        thing it may draw on, and every line came from the files on disk or from the
+        deterministic checks - never from the reviewer's opinion.
+        """
+        lines: list[str] = []
+        report = self.run.verification or {}
+        if report:
+            issues = report.get("issues", [])
+            state = "passed" if report.get("ok") else f"failed with {report.get('errors', len(issues))} error(s)"
+            lines.append(f"Deterministic checks: {state} over {report.get('checked', len(self.run.files))} file(s).")
+            for item in issues[:4]:
+                lines.append(f"  open issue: {item.get('file')} - {item.get('detail')}")
+        for item in self.run.file_summary():
+            lines.append(f"File {item['path']}: {item['lines']} lines, {item['bytes']} bytes.")
+        for path, meta in sorted(self.run.files.items()):
+            content = meta.get("content", "")
+            if not content:
+                continue
+            # The page's own structure is the honest description of what it contains.
+            sections = re.findall(r"<section[^>]*>", content, flags=re.I)
+            headings = re.findall(r"<h[12][^>]*>(.*?)</h[12]>", content, flags=re.I | re.S)
+            clean = [re.sub(r"<[^>]+>", "", h).strip() for h in headings]
+            clean = [h for h in clean if h][:8]
+            if sections:
+                lines.append(f"{path} has {len(sections)} <section> block(s).")
+            if clean:
+                lines.append(f"{path} headings: " + "; ".join(clean))
+            media = len(re.findall(r"@media", content, flags=re.I))
+            if media:
+                lines.append(f"{path} has {media} responsive breakpoint(s).")
+        if self.run.browser:
+            lines.append(f"Browser check: {'clean' if self.run.browser.get('ok') else 'found issues'}.")
+        return "\n".join(lines) or "No measured facts available."
+
     async def synthesize(self) -> None:
         agent = self.pick("synthesizer", "planner")
         await self.run.emit({"type": "phase", "phase": "synthesizing"})
         await self.run.emit({"type": "status", "agent": agent.id, "status": "thinking"})
-        roster = "; ".join(
-            f"{path} by {next((s.name for s in self.run.specialists if s.id == meta.get('agent')), 'agent')}"
-            for path, meta in self.run.files.items()
-        )
+        facts = self.measured_facts()
         try:
             text, usage = await llm.call(
                 agent,
@@ -42,13 +77,20 @@ class Orchestrator:
                     {"role": "system", "content": prompts.SYNTHESIS},
                     {
                         "role": "user",
-                        "content": f"Request: {self.run.prompt}\nFiles: {roster}\nReviewer: {self.review_text[:800]}",
+                        "content": (
+                            f"The person asked for: {self.run.prompt}\n\n"
+                            f"Measured facts (the only things you may state):\n{facts}"
+                        ),
                     },
                 ],
             )
             await self.run.emit(self.run.track_usage(agent, "synthesis", usage))
             if text:
-                await self.run.emit({"type": "message", "from": agent.id, "text": text[:800], "kind": "report"})
+                # The answer is the deliverable; a sentence cut in half is worse than a long
+                # one. The prompt bounds it at 120 words, so this cap is a guard, not a cut.
+                await self.run.emit(
+                    {"type": "message", "from": agent.id, "text": text.strip()[:4000], "kind": "report"}
+                )
         except llm.ProviderError as exc:
             await self.run.emit({"type": "error", "message": str(exc), "agent": agent.id})
         await self.run.emit({"type": "status", "agent": agent.id, "status": "done"})

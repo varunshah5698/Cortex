@@ -17,11 +17,20 @@ export default defineSchema({
   users: defineTable({
     email: v.string(),
     name: v.optional(v.string()),
-    passwordHash: v.string(),
-    passwordSalt: v.string(),
+    // Optional because a Google account has no password to hash. A row with neither is
+    // not a valid password login, and `signIn` refuses it rather than comparing against
+    // an empty string.
+    passwordHash: v.optional(v.string()),
+    passwordSalt: v.optional(v.string()),
+    // Google's stable subject id. Email can be changed by the person; this cannot, so it
+    // is what an existing account is matched on when someone signs in with Google.
+    googleId: v.optional(v.string()),
+    picture: v.optional(v.string()),
     createdAt: v.number(),
     lastSeenAt: v.optional(v.number()),
-  }).index("by_email", ["email"]),
+  })
+    .index("by_email", ["email"])
+    .index("by_google", ["googleId"]),
 
   sessions: defineTable({
     userId: v.id("users"),
@@ -112,4 +121,15 @@ export default defineSchema({
     runId: v.optional(v.string()),
     createdAt: v.number(),
   }).index("by_created", ["createdAt"]),
+
+  // A pending Google sign-in. The `state` is a random nonce minted before the redirect and
+  // consumed exactly once at the callback: without it, an attacker can hand a victim a
+  // crafted `code` and land them in the attacker's account. It is single-use and short
+  // lived for the same reason a session token is hashed.
+  oauthStates: defineTable({
+    state: v.string(),
+    redirectTo: v.string(),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+  }).index("by_state", ["state"]),
 });

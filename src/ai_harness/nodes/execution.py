@@ -8,7 +8,7 @@ from ..agents import executor
 from ..config.settings import AGENT_STEPS, REASONING_CRITIC, REASONING_WORDS
 from ..core.state import RunState
 from ..models import Specialist, WorkUnit
-from ..modules import agent_loop, context, llm, memory, progress, prompts, protected, thrash, tool_log
+from ..modules import agent_loop, context, intent, llm, memory, progress, prompts, protected, thrash, tool_log
 from . import verify
 
 
@@ -156,6 +156,14 @@ async def negotiate(run: RunState, units: list[WorkUnit]) -> None:
         await run.emit({"type": "status", "agent": agent.id, "status": "idle"})
         await run.emit({"type": "message", "from": agent.id, "to": "all", "text": text[:400], "kind": "talk"})
 
+    # Same rule as the writes below: one local runner serves one request at a time, so
+    # firing every contract at once makes them queue behind each other and the last one
+    # can outlast the provider read timeout. Ordering keeps the team and the contracts,
+    # without the pile-up. A hosted roster still negotiates in parallel.
+    if all(spec.is_local for spec in run.specialists):
+        for unit in units:
+            await one(unit)
+        return
     await asyncio.gather(*(one(unit) for unit in units))
 
 
@@ -264,6 +272,7 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
                         file=unit.file,
                         objective=unit.objective,
                         prompt=run.prompt,
+                        acceptance=intent.contract(getattr(run, "acceptance", None) or []),
                         reasoning=context.clip(reasoning, 1400 if run.depth == "ultra" else 700),
                         critique=context.clip(critique, 1600 if run.depth == "ultra" else 700)
                         or "(no reviewer pass for this run)",

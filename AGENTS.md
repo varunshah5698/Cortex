@@ -106,6 +106,14 @@ Each line exists because something went wrong without it.
 18. A browser check is a post-serve sensor: it runs only after an approved preview is
     `ready`, reports through `run.browser` and a `verify` event, and never changes a
     run's terminal `done`.
+18b. A build is judged against the request, not only against itself. The capabilities the
+    request names are extracted into `run.acceptance` before any file is written
+    (`modules/intent.py`), persisted as `acceptance.md`, injected into every code prompt,
+    and checked by `nodes/verify.py`. A new capability vocabulary goes in that module's
+    `RULES`, never into prompt wording — a model can ignore a sentence and cannot ignore a
+    failing check. A criterion's evidence must be the capability's own vocabulary, and it
+    must be anchored (`<li[\s>]`, not `<li`) or it will match `<link` and the sensor will
+    cry wolf.
 19. Cloud execution is a separate service (`ai_harness/cloud_runner.py`), not a second
     route on `/api`. The harness submits a tar.gz with a server-to-server token; the
     runner has no roster, provider keys or `/api`, and returns a per-run capability URL.

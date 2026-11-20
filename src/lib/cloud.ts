@@ -68,6 +68,19 @@ export async function whoAmI(): Promise<CloudAccount | null> {
   return await guarded(() => client.query(api.auth.me, { token: current }), null);
 }
 
+/**
+ * Start Google sign-in.
+ *
+ * The redirect URI is registered against the Convex site, so the whole exchange happens
+ * there and the browser only carries a state nonce out and a session token back. This
+ * returns the URL to navigate to; it does not navigate, so a caller can show an error
+ * instead of leaving the page when the deployment is not configured.
+ */
+export async function startGoogleSignIn(redirectTo = "/"): Promise<string> {
+  const { url } = await client.mutation(api.auth.startGoogle, { redirectTo });
+  return url;
+}
+
 // ---------- threads ----------
 
 export async function listThreads(): Promise<CloudThread[]> {

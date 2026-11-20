@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import secrets
 import shutil
 import time
@@ -107,7 +108,16 @@ ROSTER = RosterStore(ROSTER_FILE, KEYS_FILE)
 AUTH = AuthStore(AUTH_DB)
 SESSION_COOKIE = "cortex_session"
 SESSION_MAX_AGE = 30 * 24 * 60 * 60
-AUTH_OPEN = {"/api/auth/signup", "/api/auth/login", "/api/auth/me", "/api/auth/logout"}
+AUTH_OPEN = {
+    "/api/auth/signup",
+    "/api/auth/login",
+    "/api/auth/me",
+    "/api/auth/logout",
+    # Signing in cannot require being signed in: this is the endpoint that turns a verified
+    # Google identity into a session, so it is open by necessity and guarded by verifying
+    # the token against Convex rather than by a cookie.
+    "/api/auth/cloud",
+}
 _ATTEMPTS: dict[str, deque[float]] = {}
 
 # Browser checks run after the server answers, in the background. Keep a reference so
@@ -435,6 +445,54 @@ async def auth_logout(request: Request) -> JSONResponse:
     AUTH.logout(request.cookies.get(SESSION_COOKIE))
     response = JSONResponse({"ok": True})
     response.delete_cookie(SESSION_COOKIE, path="/")
+    return response
+
+
+class CloudSessionIn(BaseModel):
+    token: str = Field(min_length=1, max_length=200)
+
+
+@app.post("/api/auth/cloud")
+async def auth_cloud(payload: CloudSessionIn, request: Request) -> JSONResponse:
+    """Mint a harness session from a Convex session token.
+
+    Google sign-in completes at Convex, which issues its own session token. `/api` only
+    trusts the `cortex_session` cookie this process issues, so without this bridge a
+    signed-in person gets 401 on every build, roster and run call.
+
+    The token is *verified*, not trusted: the harness asks Convex who it belongs to and
+    mints a session for that email. A forged or expired token gets no answer from Convex
+    and therefore no cookie. With no Convex URL configured there is nothing to verify
+    against, so the endpoint refuses rather than accepting the token on faith.
+    """
+    _rate_limit(f"cloud-auth:{_client_host(request)}", limit=30)
+    site = (os.getenv("CONVEX_SITE_URL") or os.getenv("VITE_CONVEX_SITE_URL") or "").strip().rstrip("/")
+    if not site:
+        raise HTTPException(503, "Cloud sign-in is not configured on this server.")
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            answer = await client.post(f"{site}/auth/whoami", json={"token": payload.token})
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, "Could not reach the account service. Try again.") from exc
+
+    if answer.status_code != 200:
+        raise HTTPException(401, "That sign-in could not be verified. Try again.")
+    try:
+        account = answer.json()
+    except ValueError as exc:
+        raise HTTPException(502, "The account service answered with something unreadable.") from exc
+    email = str((account or {}).get("email") or "").strip()
+    if not email:
+        raise HTTPException(401, "That sign-in has no email address.")
+
+    try:
+        token, user = await asyncio.to_thread(AUTH.login_external, email, str((account or {}).get("name") or ""))
+    except AuthError as exc:
+        raise HTTPException(exc.status, str(exc)) from None
+
+    response = JSONResponse({"user": user})
+    _session_cookie(response, token, request)
     return response
 
 

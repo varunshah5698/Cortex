@@ -152,6 +152,13 @@ AGENT_ACTIVE_FILES = max(1, _int("HARNESS_AGENT_ACTIVE_FILES", 2))
 # rest of the run when a provider answers 4xx to `tools`.
 NATIVE_TOOLS = _bool("HARNESS_NATIVE_TOOLS", True)
 
+# The acceptance layer: the request's named capabilities become a checklist the harness
+# checks the tree against. This is the only sensor that asks whether the build is the
+# thing that was asked for, and it is what keeps a weak model from shipping a tidy page
+# with none of the requested features. Off only for an operator who wants structure-only
+# verification.
+INTENT_CHECK = _bool("HARNESS_INTENT_CHECK", True)
+
 # Memory hygiene: the event log is streamed to disk and only a window stays resident.
 EVENT_MEMORY_LIMIT = max(200, _int("HARNESS_EVENT_MEMORY", 4000))
 TRANSCRIPT_MAX_BYTES = max(64 * 1024, _int("HARNESS_TRANSCRIPT_BYTES", 8 * 1024 * 1024))

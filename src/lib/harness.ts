@@ -117,6 +117,12 @@ export type HarnessEvent =
       checked?: number;
       /** Tier 2: whether the artifact's own compiler ran, and what it said. */
       toolchain?: { checked: boolean; note: string } | null;
+      /** Tier 1.6: how much of the request's named capability the build contains. */
+      acceptance?: { criteria: number; hard: number; found: number; labels: string[] } | null;
+    }
+  | {
+      type: "acceptance";
+      criteria: { id: string; kind: string; label: string; hard: boolean }[];
     }
   | { type: "thrash"; tool?: string; path?: string; count: number; message: string }
   | { type: "fallback"; agent?: string; from: string; to: string; message: string }

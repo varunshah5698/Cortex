@@ -38,6 +38,7 @@ from ..config.settings import (
     AGENT_OBSERVATION_CHARS,
     AGENT_STEPS,
     MAX_FILE_BYTES,
+    MAX_RUN_BYTES,
     NATIVE_TOOLS,
 )
 from ..models import Specialist
@@ -50,6 +51,23 @@ TOOLS = ("list", "read", "search", "edit", "write", "check", "done")
 # receipt is the audit trail, and `events.jsonl` is the transcript; a repair that can
 # rewrite them can hide its own failure.
 RESERVED = {progress.FILENAME, "RECEIPT.md", "events.jsonl"}
+
+# Tool arguments arrive as JSON from a model, so a boolean is often the *string* "false".
+# `bool("false")` is True, which turned an explicit "do not replace everything" into a
+# destructive replace-all. Parse the words a model actually writes.
+TRUE_WORDS = {"true", "1", "yes", "y", "on"}
+
+
+def _flag(value: Any) -> bool:
+    """A permissive boolean for model-supplied arguments; anything unreadable is False."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in TRUE_WORDS
+    return False
+
 
 TOOL_ALIASES = {
     "read_file": "read",
@@ -338,6 +356,26 @@ class LoopState:
 
     def render(self) -> str:
         """Rebuild the state block. Pinned facts first; files are LRU-evicted."""
+        text = self._render_block()
+        if len(text) <= AGENT_CONTEXT_CHARS:
+            return text
+
+        # Over budget: drop the oldest active file first, then trim the observation and
+        # finally the ledger. The objective and the open findings live in the system
+        # prompt, outside this block, so they can never be evicted. Each pass rebuilds the
+        # block from the (now smaller) working set — recursing into render() spent one
+        # stack frame per eviction and could not terminate on a single oversized file.
+        while len(self.active) > 1:
+            self.active.popitem(last=False)
+            text = self._render_block()
+            if len(text) <= AGENT_CONTEXT_CHARS:
+                return text
+        self.last_observation = _clip(self.last_observation, max(600, AGENT_OBSERVATION_CHARS // 2))
+        self.ledger = self.ledger[-6:]
+        return _clip(self._render_block(), AGENT_CONTEXT_CHARS)
+
+    def _render_block(self) -> str:
+        """One pass over the current state. No eviction, no truncation."""
         segments: list[str] = []
 
         segments.append(progress.orient(self.run))
@@ -368,20 +406,7 @@ class LoopState:
         if self.last_observation:
             segments.append("LAST OBSERVATION:\n" + self.last_observation)
 
-        text = "\n\n".join(segment for segment in segments if segment)
-        if len(text) <= AGENT_CONTEXT_CHARS:
-            return text
-
-        # Over budget: drop the oldest active file first, then trim the observation and
-        # finally the ledger. The objective and the open findings live in the system
-        # prompt, outside this block, so they can never be evicted.
-        while len(self.active) > 1:
-            self.active.popitem(last=False)
-            return self.render()
-        self.last_observation = _clip(self.last_observation, max(600, AGENT_OBSERVATION_CHARS // 2))
-        self.ledger = self.ledger[-6:]
-        text = "\n\n".join(segment for segment in segments if segment)
-        return _clip(text, AGENT_CONTEXT_CHARS)
+        return "\n\n".join(segment for segment in segments if segment)
 
     # ---------- tools ----------
 
@@ -412,6 +437,15 @@ class LoopState:
         size = len(content.encode("utf-8"))
         if size > MAX_FILE_BYTES:
             raise ToolError(f"{path} would be {size} bytes; the limit is {MAX_FILE_BYTES}")
+        # The per-file cap does not bound the run: eight files at the cap are four times
+        # MAX_RUN_BYTES. Enforce the run quota here, at the tool boundary, before writing.
+        others = sum(
+            len(str(meta.get("content") or "").encode("utf-8"))
+            for other, meta in self.run.files.items()
+            if other != path
+        )
+        if others + size > MAX_RUN_BYTES:
+            raise ToolError(f"{path} would put the run at {others + size} bytes; the run limit is {MAX_RUN_BYTES}")
         self.run.fm.write(path, content)
         meta = self.run.files.get(path) or {"agent": self.agent.id}
         meta.update({"content": content, "done": True, "revised": True})
@@ -482,7 +516,7 @@ class LoopState:
             count = existing.count(find)
             if count == 0:
                 raise ToolError(f"{find!r} does not appear in {path}; read it again and copy the exact text")
-            replace_all = bool(args.get("all") or args.get("replace_all"))
+            replace_all = _flag(args.get("all")) or _flag(args.get("replace_all"))
             if count > 1 and not replace_all:
                 raise ToolError(
                     f'{find!r} appears {count} times in {path}; include more surrounding text or set "all": true'

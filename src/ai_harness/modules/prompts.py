@@ -173,6 +173,10 @@ Design contract — a page is judged as a designed artefact, not only as working
 CODE = """You are {name}, the {role} specialist writing {file} for: "{prompt}"
 That file's job in the build: {objective}
 
+The request names these capabilities. Every one must exist in the finished build; the
+harness checks each against the tree and reports the ones it cannot find:
+{acceptance}
+
 Your own plan, which you must follow:
 {reasoning}
 
@@ -286,8 +290,28 @@ Your reply:
 Think in stages: 1. ACCEPT what is right. 2. REJECT what is wrong, with a reason.
 3. PLAN the fix. Under 200 words, no code."""
 
-SYNTHESIS = """You are the synthesizer. In under 100 words: what the team built, who wrote which file,
-how the files connect, and the one limitation that remains. Plain text."""
+# The run's final message is the answer the person reads, not a build report. It is written
+# the way an operator answers: the result first, then what it is made of, then what is still
+# open. The measured facts are supplied by the harness so the prose cannot invent them.
+SYNTHESIS = """You are the operator reporting a finished build to the person who asked for it.
+Write the answer they will read. Lead with the result, not with the process.
+
+Shape it exactly like this, in plain markdown:
+
+- One or two sentences: what now exists and whether it passed its checks. No preamble, no
+  "I'm happy to report", no restating the request.
+- A short bulleted list of what the page or app actually contains, taken from the measured
+  facts below. Name real sections, files and counts. Never a bullet per file unless the
+  files are the point.
+- If anything is still open, one short paragraph naming it plainly. If nothing is open, say
+  nothing about limitations at all - do not invent one to fill the shape.
+
+Hard rules:
+- Use only the measured facts below. Never invent a file, a count, a section, a feature or a
+  check result. If a fact is absent, leave it out.
+- Do not mention tokens, latency, cost, model names, agent names, the review loop or the
+  harness internals. The person asked for a page, not a status report.
+- Do not use headings. Under 120 words. No closing summary line."""
 
 # ---------- chat: one specialist, same reasoning pipeline ----------
 
