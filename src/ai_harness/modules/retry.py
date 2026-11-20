@@ -50,6 +50,10 @@ def is_retryable(exc: BaseException) -> bool:
         return False
     status = getattr(exc, "status", None)
     if status is not None:
+        # A 402 with Retry-After is a free tier saying "wait", not a payment refusal
+        # (Pollinations sends exactly this). Without the header it stays final.
+        if status == 402 and getattr(exc, "retry_after", None):
+            return True
         return status in RETRYABLE_STATUS
     text = f"{type(exc).__name__}: {exc}".lower()
     if any(hint in text for hint in FATAL_HINTS):

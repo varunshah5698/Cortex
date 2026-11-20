@@ -192,6 +192,8 @@ def test_retry_classification_tells_weather_from_credentials(tmp_path: Path) -> 
     # HTTP failures carry a status, which decides before any message hint
     assert is_retryable(ProviderError("Ada: HTTP 503 upstream", status=503))
     assert is_retryable(ProviderError("Ada: HTTP 429 rate limit", status=429))
+    assert is_retryable(ProviderError("Ada: HTTP 402 free limit", status=402, retry_after=32.0))
+    assert not is_retryable(ProviderError("Ada: HTTP 402 payment required", status=402))
     assert not is_retryable(ProviderError("Ada: HTTP 401 — check the API key", status=401))
     assert not is_retryable(ProviderError("Ada: HTTP 404 model missing", status=404))
     assert not is_retryable(ProviderError("Ada: HTTP 422 unprocessable", status=422))
