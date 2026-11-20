@@ -54,6 +54,8 @@ MODULE_SUFFIXES = SCRIPT_SUFFIXES + (".vue", ".svelte")
 # Extensions an extensionless relative import may resolve to.
 RESOLVABLE_EXTENSIONS = MODULE_SUFFIXES + (".json", ".css")
 INDEX_FILES = ("index.ts", "index.tsx", "index.js", "index.jsx")
+ENTRY_FILES = ("src/main.tsx", "src/main.jsx", "src/main.ts", "src/main.js")
+ROOT_COMPONENTS = ("src/App.tsx", "src/App.jsx", "src/App.vue", "src/App.svelte")
 
 JS_FROM = re.compile(r"""\bfrom\s*["']([^"']+)["']""")
 JS_REQUIRE = re.compile(r"""\brequire\(\s*["']([^"']+)["']\s*\)""")
@@ -267,6 +269,35 @@ def _check_manifest(path: str, data: dict, files: dict[str, dict], issues: list[
         )
 
 
+def _check_root_component(files: dict[str, dict], issues: list[dict]) -> None:
+    """The entry must render the root component, not re-implement it beside it.
+
+    An agent that owns `src/main.tsx` but not `src/App.tsx` used to write the whole page
+    into the entry, leaving App unreferenced. Both files then looked valid in isolation.
+    """
+    if not any(path in files for path in ENTRY_FILES):
+        return
+    for app in ROOT_COMPONENTS:
+        meta = files.get(app) or {}
+        if not (meta.get("content") or "").strip():
+            continue
+        stem = posixpath.splitext(app.rsplit("/", 1)[-1])[0]
+        pattern = re.compile(rf"""(?:\bfrom\s*|\bimport\s+)["'][^"']*\b{re.escape(stem)}(?:\.\w+)?["']""")
+        imported = any(
+            other != app and pattern.search(meta.get("content") or "")
+            for other, meta in files.items()
+            if (meta.get("content") or "").strip()
+        )
+        if not imported:
+            _issue(
+                issues,
+                "error",
+                "unreferenced_root",
+                app,
+                f"{app} is not imported by any other file — the entry must render it, not duplicate it",
+            )
+
+
 def check(files: dict[str, dict], declared: list[str] | None = None) -> dict:
     """Read the written tree and report contradictions. No model, no network."""
     declared = list(declared or files.keys())
@@ -382,6 +413,8 @@ def check(files: dict[str, dict], declared: list[str] | None = None) -> dict:
             _check_rust(path, content, files, issues)
         if path.endswith(".go"):
             _check_go(path, content, go_module, files, issues)
+
+    _check_root_component(files, issues)
 
     # A Python file that does not parse is a fact about its text, so it belongs with the
     # structural checks rather than in the toolchain pass that needs a subprocess.

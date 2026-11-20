@@ -133,3 +133,17 @@ def test_a_vite_manifest_with_an_entry_shell_passes() -> None:
     }
     report = verify.check(files, list(files))
     assert not any(issue["code"] in ("manifest_mismatch", "missing_entry") for issue in report["issues"])
+
+
+def test_an_entry_that_duplicates_the_root_component_is_an_error() -> None:
+    """main.tsx writing its own page leaves App.tsx unreferenced; both look valid alone."""
+    from ai_harness.nodes import verify
+
+    files = {
+        "src/main.tsx": {"content": "const App = () => <main>hello</main>; render(<App />);"},
+        "src/App.tsx": {"content": "export default function App() { return <main>hello</main>; }"},
+    }
+    report = verify.check(files, list(files))
+    codes = [issue["code"] for issue in report["issues"]]
+    assert "unreferenced_root" in codes, report["issues"]
+    assert not report["ok"]

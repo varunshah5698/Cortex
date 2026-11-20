@@ -437,6 +437,7 @@ async def revise(
                         name=author.name,
                         role=author.role,
                         file=unit.file,
+                        objective=unit.objective,
                         prompt=run.prompt,
                         reasoning=deliberation or answered,
                         critique=findings[:700],

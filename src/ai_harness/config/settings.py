@@ -87,7 +87,7 @@ HOST = os.getenv("HARNESS_HOST", "127.0.0.1")
 PORT = _int("HARNESS_PORT", 8000)
 
 # Reasoning and execution limits
-MAX_UNITS = max(1, _int("HARNESS_MAX_UNITS", 4))
+MAX_UNITS = max(1, _int("HARNESS_MAX_UNITS", 8))
 MAX_RESEARCH_QUERIES = _int("HARNESS_MAX_RESEARCH_QUERIES", 3)
 MAX_RESEARCH_PAGES = _int("HARNESS_MAX_RESEARCH_PAGES", 2)
 REASONING_WORDS = _int("HARNESS_REASONING_WORDS", 320)
@@ -95,7 +95,7 @@ REASONING_WORDS = _int("HARNESS_REASONING_WORDS", 320)
 # file and catches broken wiring on paper; deep runs keep it on by default.
 REASONING_CRITIC = _bool("HARNESS_REASONING_CRITIC", True)
 HTTP_TIMEOUT_READ = _float("HARNESS_HTTP_TIMEOUT_READ", 300.0)
-MAX_OUTPUT_TOKENS = _int("HARNESS_MAX_OUTPUT_TOKENS", 4096)
+MAX_OUTPUT_TOKENS = _int("HARNESS_MAX_OUTPUT_TOKENS", 8192)
 MAX_FILE_LINES = _int("HARNESS_MAX_FILE_LINES", 900)
 
 # Wall-clock and concurrency control. A run is bounded in time as well as in money.

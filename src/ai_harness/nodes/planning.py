@@ -10,7 +10,7 @@ from ..models import Specialist, WorkUnit
 from ..modules import memory, progress, tool_log
 
 PLAN_FILE = ".harness-plan.json"
-HARNESS_FILES = ("package.json", "index.html", "vite.config.ts")
+HARNESS_FILES = ("package.json", "index.html", "vite.config.ts", "tsconfig.json")
 
 
 def _vite_react(files: list[str]) -> str:
@@ -30,8 +30,36 @@ def _manifest(prompt: str, entry: str) -> str:
         "devDependencies": {"@vitejs/plugin-react": "^4.3.1", "vite": "^5.4.0"},
     }
     if entry.endswith(".tsx"):
-        body["devDependencies"]["typescript"] = "^5.5.4"
+        body["devDependencies"].update(
+            {"typescript": "^5.5.4", "@types/react": "^18.3.12", "@types/react-dom": "^18.3.1"}
+        )
     return json.dumps(body, indent=2) + "\n"
+
+
+def _tsconfig() -> str:
+    return (
+        json.dumps(
+            {
+                "compilerOptions": {
+                    "target": "ES2020",
+                    "useDefineForClassFields": True,
+                    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+                    "module": "ESNext",
+                    "skipLibCheck": True,
+                    "moduleResolution": "bundler",
+                    "allowImportingTsExtensions": True,
+                    "resolveJsonModule": True,
+                    "isolatedModules": True,
+                    "noEmit": True,
+                    "jsx": "react-jsx",
+                    "strict": True,
+                },
+                "include": ["src"],
+            },
+            indent=2,
+        )
+        + "\n"
+    )
 
 
 def _index(entry: str) -> str:
@@ -84,15 +112,18 @@ async def run(run: RunState, planner: Specialist) -> tuple[list[WorkUnit], list[
     entry = _vite_react(files)
     harness_files: dict[str, str] = {}
     if entry:
-        for path in HARNESS_FILES:
+        owned = HARNESS_FILES if entry.endswith(".tsx") else HARNESS_FILES[:-1]
+        for path in owned:
             if path not in files:
                 files.append(path)
-        units = [unit for unit in units if unit.file not in HARNESS_FILES]
+        units = [unit for unit in units if unit.file not in owned]
         harness_files = {
             "package.json": _manifest(run.prompt, entry),
             "index.html": _index(entry),
             "vite.config.ts": _vite_config(),
         }
+        if entry.endswith(".tsx"):
+            harness_files["tsconfig.json"] = _tsconfig()
 
     mapping = assign(run.specialists, units)
     for unit in units:

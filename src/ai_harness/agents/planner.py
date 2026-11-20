@@ -56,8 +56,9 @@ FAMILIES: list[tuple[str, re.Pattern, list[tuple[str, str, str, str]]]] = [
         [
             ("Manifest", "backend", "package.json", "name, dev/build scripts, and only the dependencies actually used"),
             ("Shell", "frontend", "index.html", "the document with #root that loads /src/main.tsx"),
-            ("Entry", "frontend", "src/main.tsx", "mount the app into #root"),
-            ("UI", "frontend", "src/App.tsx", "the complete component tree for the request, styles included"),
+            ("Entry", "frontend", "src/main.tsx", "mount App into #root and import ./styles.css"),
+            ("UI", "frontend", "src/App.tsx", "the page sections the request names, importing each component"),
+            ("Styles", "frontend", "src/styles.css", "complete responsive styling for every class the UI uses"),
         ],
     ),
     (

@@ -16,19 +16,21 @@ that makes it runnable. Any language or framework is allowed — not only the we
 
 Reply with ONLY this JSON, no prose, no fences:
 {"objective":"one sentence","stack":"react+typescript",
- "files":["package.json","index.html","src/main.tsx","src/App.tsx"],
+ "files":["src/main.tsx","src/App.tsx","src/styles.css","src/components/Projects.tsx"],
  "work_units":[{"title":"short name","role":"frontend|backend|general","file":"src/App.tsx",
                 "objective":"what exactly this file must contain"}],
  "research_questions":["a question worth searching the web for","..."]}
 
 Rules:
-- 2 to 4 files, real paths with the correct extensions. Nested folders are fine.
-- Include a manifest when the stack needs one (package.json, requirements.txt, pyproject.toml, go.mod).
+- 3 to 6 files, real paths with the correct extensions. Nested folders are fine.
+- Decompose by concern, not by paragraph: entry wiring, root component, stylesheet, and one
+  component per section the request names (hero, about, projects, contact). A single file is
+  for a small page, not a full site.
+- The harness writes `package.json`, `index.html` and `vite.config.ts` for a Vite React tree.
+  Plan the app and the stylesheet; do not spend a work unit on those three.
 - A Vite/React, Vue or Svelte tree needs `index.html` at the root and its entry file must load
   the source entry (`/src/main.tsx`, `/src/main.ts`). Do not name Next.js (`next dev`) unless
   you also plan its `app/` or `pages/` tree — a Vite entry with a Next manifest cannot build.
-- The manifest must agree with the tree: its scripts and dependencies are for the stack you
-  actually listed, and its entry file must exist in the plan.
 - The files must fit together: the entry file imports the others by those exact paths.
 - Roles: markup, styling and UI are frontend; logic, data, entry wiring and manifests are backend.
 - A React request gets .tsx/.jsx, a Python request gets .py, a CLI gets .ts or .go — match the request.
@@ -63,6 +65,7 @@ Sources:
 
 # Pass 1 — pure reasoning, no code. This is what the human watches.
 REASON = """You are {name}, the {role} specialist. You own exactly one file: {file}
+That file's job in the build: {objective}
 The team is building: "{prompt}"
 
 Peer interfaces you must honour:
@@ -115,6 +118,7 @@ check the builder must not skip."""
 
 # Pass 2 — code, grounded in the agent's own reasoning and the critic's findings.
 CODE = """You are {name}, the {role} specialist writing {file} for: "{prompt}"
+That file's job in the build: {objective}
 
 Your own plan, which you must follow:
 {reasoning}
