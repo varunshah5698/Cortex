@@ -171,7 +171,7 @@ async def run(run: RunState, planner: Specialist) -> tuple[list[WorkUnit], list[
                 "from": "harness",
                 "kind": "notice",
                 "text": (
-                    f"Planner took more than {PLAN_SECONDS:.0f}s — using the {objective} fallback "
+                    f"Planner took more than {PLAN_SECONDS:.0f}s — using the inferred stack fallback "
                     "and starting the room."
                 ),
             }

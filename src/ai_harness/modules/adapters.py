@@ -99,6 +99,25 @@ _local_locks: dict[tuple[str, str], asyncio.Lock] = {}
 _slots: dict[tuple[str, str], asyncio.Semaphore] = {}
 
 
+class _UnboundSlot:
+    """A no-op slot for a synchronous caller with no running loop.
+
+    `asyncio.Semaphore` binds to the loop that exists when it is constructed. On 3.9,
+    constructing one outside a loop (or after `asyncio.run` closed the last one) raises.
+    There is no request to gate in that context; the real async path still gets a
+    semaphore, and a test that only inspects the policy still sees a non-None answer.
+    """
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+
+_UNBOUND_SLOT = _UnboundSlot()
+
+
 async def _throttle(spec: Specialist) -> None:
     key = ((spec.baseUrl or "").rstrip("/"), spec.model or "")
     bucket = _buckets.get(key)
@@ -107,7 +126,7 @@ async def _throttle(spec: Specialist) -> None:
     await bucket.take()
 
 
-def _request_slot(spec: Specialist) -> asyncio.Lock | asyncio.Semaphore | None:
+def _request_slot(spec: Specialist) -> asyncio.Lock | asyncio.Semaphore | _UnboundSlot | None:
     """The concurrency limit for one endpoint+model, or None for the provider's own.
 
     A local daemon is always one at a time. A hosted gateway uses the configured
@@ -115,12 +134,20 @@ def _request_slot(spec: Specialist) -> asyncio.Lock | asyncio.Semaphore | None:
     """
     key = ((spec.baseUrl or "").rstrip("/"), spec.model or "")
     if spec.is_local:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return _UNBOUND_SLOT
         lock = _local_locks.get(key)
         if lock is None:
             lock = _local_locks[key] = asyncio.Lock()
         return lock
     if PROVIDER_CONCURRENCY <= 0:
         return None
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return _UNBOUND_SLOT
     slot = _slots.get(key)
     if slot is None:
         slot = _slots[key] = asyncio.Semaphore(PROVIDER_CONCURRENCY)
@@ -376,7 +403,7 @@ async def _ollama(
         # A multi-file build calls the same model for minutes; do not pay a reload between
         # calls. One hour is longer than any bounded run.
         "keep_alive": "1h",
-        "options": {"temperature": temperature},
+        "options": {"temperature": temperature, "num_predict": MAX_OUTPUT_TOKENS},
     }
     if json_mode:
         body["format"] = "json"

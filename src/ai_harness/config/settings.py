@@ -108,9 +108,10 @@ MAX_REASONING_CHARS = max(1000, _int("HARNESS_MAX_REASONING_CHARS", REASONING_WO
 # A planner that has not produced a plan by now is not going to. The node falls back to
 # the stack inferred from the request and starts the room writing, rather than leaving
 # the UI at "planning" forever.
-# 0 disables the planner deadline. A local model can spend minutes on a plan; cutting it
-# off at two minutes replaced the model's thinking with a generic fallback scaffold.
-PLAN_SECONDS = max(0.0, _float("HARNESS_PLAN_SECONDS", 0.0))
+# 0 disables the planner deadline. The default is bounded because the alternative on a
+# slow local model is a room stuck at "planning" with no file; the fallback scaffold is
+# still runnable and the reviewers can improve it.
+PLAN_SECONDS = max(0.0, _float("HARNESS_PLAN_SECONDS", 120.0))
 # A second, adversarial read of the plan before code is written. It costs one call per
 # file and catches broken wiring on paper; deep runs keep it on by default.
 REASONING_CRITIC = _bool("HARNESS_REASONING_CRITIC", True)

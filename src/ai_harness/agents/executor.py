@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from ..config.settings import MAX_REASONING_CHARS
 from ..models import Specialist
 from ..modules import llm
 
@@ -100,11 +101,28 @@ def fallback_code(thought: str) -> str:
     return max(blocks, key=len).strip("\n") if blocks else ""
 
 
+async def _bounded_stream(agent: Specialist, messages: list[dict[str, str]], on_think, limit: int) -> llm.StreamStats:
+    """Consume a reasoning stream, but stop a model that will not stop itself.
+
+    A local model can repeat the same plan for twenty minutes and never reach the code
+    pass. Breaking the async generator closes the provider stream; the caller still has
+    the partial reasoning and can compose against it.
+    """
+    stats = llm.StreamStats()
+    seen = 0
+    async for _kind, text in llm.stream(agent, messages, think=True, stats=stats):
+        seen += len(text)
+        if seen <= limit:
+            await on_think(text)
+        else:
+            await on_think("\n…[reasoning budget reached — moving to the file]\n")
+            break
+    return stats
+
+
 async def reason(agent: Specialist, messages: list[dict[str, str]], on_think) -> tuple[str, llm.Usage]:
     """Pass one: pure deliberation, no code. This is the layer the human watches."""
-    stats = llm.StreamStats()
-    async for _kind, text in llm.stream(agent, messages, think=True, stats=stats):
-        await on_think(text)
+    stats = await _bounded_stream(agent, messages, on_think, MAX_REASONING_CHARS)
     # Providers with a dedicated thinking channel put nothing in `content`.
     deliberation = "".join(stats.content).strip() or "".join(stats.thinking).strip()
     return deliberation, stats.usage
@@ -116,9 +134,7 @@ async def critique(agent: Specialist, messages: list[dict[str, str]], on_think) 
     It streams into the same visible reasoning channel: the person watching sees the
     plan get attacked, and the code pass is grounded in what survived.
     """
-    stats = llm.StreamStats()
-    async for _kind, text in llm.stream(agent, messages, think=True, stats=stats):
-        await on_think(text)
+    stats = await _bounded_stream(agent, messages, on_think, max(1200, MAX_REASONING_CHARS // 3))
     findings = "".join(stats.content).strip() or "".join(stats.thinking).strip()
     return findings, stats.usage
 
@@ -149,9 +165,14 @@ async def compose(
             else:
                 await on_code(path, text)
 
+    think_chars = 0
     async for kind, text in llm.stream(agent, messages, think=True, stats=stats):
         if kind == "think":
+            think_chars += len(text)
             await on_think(text)
+            if router.mode == "think" and think_chars > MAX_REASONING_CHARS:
+                await on_think("\n…[reasoning budget reached — writing from the plan]\n")
+                break
         else:
             await route(router.feed(text))
     await route(router.flush())

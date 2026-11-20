@@ -38,3 +38,14 @@ def test_the_vite_shell_uses_relative_assets_and_a_real_entry():
     assert "--accent" in planning._base_css()
     manifest = planning._manifest("build a portfolio", "src/main.tsx")
     assert '"vite"' in manifest and '"react"' in manifest
+
+
+def test_a_single_page_request_is_one_file_not_three_empty_ones():
+    from ai_harness.agents.planner import infer_stack
+
+    stack, units = infer_stack("Build a single-page portfolio with hero, about and contact")
+    assert stack == "single-page html"
+    assert [unit.file for unit in units] == ["index.html"]
+
+    stack, _ = infer_stack("Build a single-page React portfolio")
+    assert stack != "single-page html"

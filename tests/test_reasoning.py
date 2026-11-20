@@ -12,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import ai_harness.core.state as state_mod  # noqa: E402
+from ai_harness.agents import executor  # noqa: E402
 from ai_harness.core.state import RunState  # noqa: E402
 from ai_harness.models import Specialist, WorkUnit  # noqa: E402
 from ai_harness.modules import llm  # noqa: E402
@@ -60,3 +61,51 @@ def test_a_deep_build_is_critiqued_by_another_specialist_before_code(monkeypatch
     assert any(
         event["type"] == "think" and event["agent"] == "r1" and "VERDICT" in event["delta"] for event in run.events
     ), "the critique must stream into the visible reasoning channel"
+
+
+def test_a_rambling_reasoning_stream_is_cut_off(monkeypatch):
+    monkeypatch.setattr(executor, "MAX_REASONING_CHARS", 100)
+    seen: list[str] = []
+
+    async def fake_stream(agent, messages, think=True, stats=None):  # noqa: ANN001
+        for _ in range(1000):
+            stats.thinking.append("word ")
+            yield ("think", "word ")
+
+    async def sink(text: str) -> None:
+        seen.append(text)
+
+    monkeypatch.setattr(executor.llm, "stream", fake_stream)
+    agent = Specialist(id="a", name="A", role="general", model="stub")
+    text, _usage = asyncio.run(executor.reason(agent, [{"role": "user", "content": "x"}], sink))
+
+    assert len(text) <= 200
+    assert len(seen) < 1000
+    assert any("reasoning budget" in item for item in seen)
+
+
+def test_a_compose_that_only_thinks_never_becomes_a_file(monkeypatch):
+    monkeypatch.setattr(executor, "MAX_REASONING_CHARS", 100)
+    calls = {"think": 0, "code": 0}
+
+    async def fake_stream(agent, messages, think=True, stats=None):  # noqa: ANN001
+        for _ in range(1000):
+            calls["think"] += 1
+            stats.thinking.append("word ")
+            yield ("think", "word ")
+
+    async def sink(_text: str) -> None:
+        return None
+
+    async def code(_path: str, _text: str) -> None:
+        calls["code"] += 1
+
+    monkeypatch.setattr(executor.llm, "stream", fake_stream)
+    agent = Specialist(id="a", name="A", role="general", model="stub")
+    files, _usage = asyncio.run(
+        executor.compose(agent, [{"role": "user", "content": "x"}], sink, code, sink, "index.html")
+    )
+
+    assert files == []
+    assert calls["think"] < 1000
+    assert calls["code"] == 0

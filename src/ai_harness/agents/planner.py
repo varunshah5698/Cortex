@@ -124,8 +124,20 @@ def _units(specs: list[tuple[str, str, str, str]], prompt: str) -> list[WorkUnit
     ]
 
 
+SINGLE_FILE = _hints("single-page", "single page", "self-contained", "one file", "single file", "inline css")
+FRAMEWORK = _hints("react", "vite", "next.js", "nextjs", "vue", "nuxt", "svelte")
+
+
 def infer_stack(prompt: str) -> tuple[str, list[WorkUnit]]:
     """Pick the smallest sensible scaffold for the stack the request implies."""
+    # A request for one self-contained page should not be scaffolded into three files
+    # the author never fills. That is how a working local model produced a 251-line
+    # index.html and still left styles.css/app.js empty for the verifier to reject.
+    if SINGLE_FILE.search(prompt) and not FRAMEWORK.search(prompt):
+        return "single-page html", _units(
+            [("Page", "frontend", "index.html", "the complete self-contained page, inline CSS and script")],
+            prompt,
+        )
     for stack, pattern, specs in FAMILIES:
         if pattern.search(prompt):
             return stack, _units(specs, prompt)
@@ -150,6 +162,25 @@ def _role_for(path: str) -> str:
     if suffix in ("json", "toml", "lock", "mod"):
         return "backend"
     return "general"
+
+
+def _objective_for(path: str, prompt: str) -> str:
+    """A file-specific brief for a unit the planner declared but did not describe.
+
+    "Complete this file so the whole app runs" was read literally: the entry agent
+    wrote a second full page into `src/main.tsx`. The fallback brief has to name the
+    one job this file has, not the whole request.
+    """
+    name = path.rsplit("/", 1)[-1]
+    if name in ("main.tsx", "main.jsx", "main.ts", "main.js"):
+        return "Mount the root App component into #root and import the stylesheet. Do not re-implement the page."
+    if name in ("App.tsx", "App.jsx", "App.vue", "App.svelte"):
+        return "Compose the section components into the page, importing each one. Do not duplicate a section."
+    if path.endswith((".css", ".scss")):
+        return "Define only the classes the components use, with responsive layout and theme. No markup."
+    if "/components/" in path:
+        return f"Implement only the {name} section component and export it for the root component to import."
+    return f"Implement only {path} so it fits the other files. Request: {prompt}"
 
 
 def parse(raw: str, prompt: str) -> tuple[str, list[WorkUnit], list[str]]:
@@ -193,7 +224,12 @@ def parse(raw: str, prompt: str) -> tuple[str, list[WorkUnit], list[str]]:
             assigned.add(unit.file)
             continue
         free = next((path for path in declared if path not in assigned), None)
-        unit.file = free or _clean(unit.file, index)
+        if free and unit.file != free:
+            # The unit was described for a different path; its brief is now wrong.
+            unit.file = free
+            unit.objective = _objective_for(free, prompt)
+        else:
+            unit.file = free or _clean(unit.file, index)
         assigned.add(unit.file)
 
     # ...and every declared file must own a unit, or it stays an empty scaffold forever
@@ -208,7 +244,7 @@ def parse(raw: str, prompt: str) -> tuple[str, list[WorkUnit], list[str]]:
                 title=path.split("/")[-1][:60],
                 role=_role_for(path),
                 file=path,
-                objective=f"Complete {path} so the whole app runs. Request: {prompt}",
+                objective=_objective_for(path, prompt),
             )
         )
         assigned.add(path)
