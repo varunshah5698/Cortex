@@ -21,7 +21,7 @@ from ..models import Specialist
 from ..utils.logger import event_log
 from . import budget as pricing
 from . import runtime
-from .adapters import ProviderError, aclose, reachable
+from .adapters import ProviderError, aclose, reachable, warm
 from .adapters import stream as _adapter_stream
 from .cache import CACHE
 from .retry import with_retries
@@ -38,6 +38,7 @@ __all__ = [
     "call",
     "reachable",
     "stream",
+    "warm",
 ]
 
 

@@ -44,6 +44,9 @@ SCRIPT_TAG = re.compile(r"<script\b", re.I)
 STYLESHEET_LINK = re.compile(r"""<link\b[^>]*\brel\s*=\s*["']?stylesheet""", re.I)
 PLACEHOLDERS = ("todo:", "fixme", "your code here", "lorem ipsum")
 EXTERNAL = ("http://", "https://", "//", "data:", "mailto:", "#")
+# A file marker that leaked into the file itself. `>>>` alone is the tail of
+# `<<<FILE path>>>`; JS's `a >>> b` is not a whole line and is untouched.
+MARKER_ARTIFACT = re.compile(r"^\s*(?:>>>|<<<FILE\b.*>>>)\s*$", re.M)
 
 # Anything that can query the DOM. Scaffolding emits .tsx/.ts now, not just .js.
 SCRIPT_SUFFIXES = (".js", ".mjs", ".jsx", ".ts", ".tsx")
@@ -232,6 +235,15 @@ def check(files: dict[str, dict], declared: list[str] | None = None) -> dict:
         for marker in PLACEHOLDERS:
             if marker in lowered:
                 _issue(issues, "warn", "placeholder", path, f"still contains {marker!r}")
+        leak = MARKER_ARTIFACT.search(content)
+        if leak:
+            _issue(
+                issues,
+                "error",
+                "stray_marker",
+                path,
+                f"contains the model protocol marker {leak.group(0).strip()!r}; remove it",
+            )
         if path.endswith((".css",) + SCRIPT_SUFFIXES):
             if content.count("{") != content.count("}"):
                 _issue(

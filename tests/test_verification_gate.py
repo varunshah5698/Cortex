@@ -87,3 +87,14 @@ def test_run_refuses_done_when_verification_still_fails(tmp_path: Path, monkeypa
         assert ledger["verification"]["ok"] is False
     finally:
         state_mod.RUNS_ROOT = original_root
+
+
+def test_a_leaked_file_marker_is_a_verification_error() -> None:
+    from ai_harness.nodes import verify
+
+    report = verify.check(
+        {"index.html": {"content": "<!doctype html><html><body>hello</body></html>\n>>>\n"}},
+        ["index.html"],
+    )
+    assert report["ok"] is False
+    assert any(issue["code"] == "stray_marker" for issue in report["issues"])

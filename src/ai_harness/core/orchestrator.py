@@ -125,21 +125,41 @@ class Orchestrator:
             event_log(self.run.run_id, "start", prompt=self.run.prompt, depth=self.run.depth)
 
             # A local daemon that is not running cannot write a file; fail before the
-            # planner spends three minutes discovering that.
+            # planner spends three minutes discovering that. Then load the model once,
+            # so the first file does not pay the cold-start.
+            warmed: set[tuple[str, str]] = set()
             for spec in self.run.specialists:
                 if not spec.is_local:
                     continue
                 ok, detail = await llm.reachable(spec)
-                if ok:
+                if not ok:
+                    message = (
+                        f"{spec.name}: the local provider at {spec.baseUrl} is not answering "
+                        f"({detail}). Start it (for example `ollama serve`), then run again."
+                    )
+                    event_log(self.run.run_id, "error", error=message)
+                    failures.record(self.run, None, message)
+                    await self.run.emit({"type": "error", "message": message, "agent": spec.id})
+                    return
+                key = ((spec.baseUrl or "").rstrip("/"), spec.model)
+                if key in warmed:
                     continue
-                message = (
-                    f"{spec.name}: the local provider at {spec.baseUrl} is not answering "
-                    f"({detail}). Start it (for example `ollama serve`), then run again."
+                warmed.add(key)
+                await self.run.emit(
+                    {
+                        "type": "message",
+                        "from": "harness",
+                        "kind": "notice",
+                        "text": f"Loading {spec.model} before the first call — this is the slow part.",
+                    }
                 )
-                event_log(self.run.run_id, "error", error=message)
-                failures.record(self.run, None, message)
-                await self.run.emit({"type": "error", "message": message, "agent": spec.id})
-                return
+                ok, detail = await llm.warm(spec)
+                if not ok:
+                    message = f"{spec.name}: {spec.model} did not load ({detail}). Check `ollama list`."
+                    event_log(self.run.run_id, "error", error=message)
+                    failures.record(self.run, None, message)
+                    await self.run.emit({"type": "error", "message": message, "agent": spec.id})
+                    return
 
             all_local = all(spec.is_local for spec in self.run.specialists)
             units, files, questions = await planning.run(self.run, planner)

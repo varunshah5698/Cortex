@@ -436,6 +436,29 @@ async def reachable(spec: Specialist) -> tuple[bool, str]:
         return False, type(exc).__name__
 
 
+async def warm(spec: Specialist, timeout: float = 180.0) -> tuple[bool, str]:
+    """Load a local model before the run needs it, so the first file is not the wait.
+
+    Only native Ollama exposes a load endpoint; an OpenAI-compatible local server either
+    loads on the first request or is fast enough that a preflight would be noise.
+    """
+    if protocol(spec) != "ollama":
+        return True, ""
+    url = _native_ollama_url(_base(spec)).replace("/api/chat", "/api/generate")
+    body = {
+        "model": spec.model,
+        "prompt": "ok",
+        "stream": False,
+        "keep_alive": "1h",
+        "options": {"num_predict": 1},
+    }
+    try:
+        response = await client().post(url, json=body, timeout=timeout)
+        return response.status_code < 400, f"HTTP {response.status_code}"
+    except httpx.HTTPError as exc:
+        return False, type(exc).__name__
+
+
 async def stream(
     spec: Specialist,
     messages: list[dict[str, str]],
