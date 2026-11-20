@@ -6,6 +6,9 @@ from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "0.0.0.0", "::1"}
+# Public providers that answer without an account. A specialist pointed here is runnable
+# from a cloud deployment where the visitor's own loopback Ollama is not reachable.
+KEYLESS_HOSTS = {"text.pollinations.ai"}
 
 
 @dataclass
@@ -27,7 +30,11 @@ class Specialist:
 
     @property
     def ready(self) -> bool:
-        return bool(self.model and self.baseUrl and (self.apiKey or self.is_local))
+        try:
+            host = urlparse(self.baseUrl).hostname
+        except ValueError:
+            host = None
+        return bool(self.model and self.baseUrl and (self.apiKey or self.is_local or host in KEYLESS_HOSTS))
 
     def public(self) -> dict:
         return {

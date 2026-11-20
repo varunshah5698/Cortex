@@ -83,18 +83,31 @@ export const roleColor = (role: Role) =>
     general: "#7b7288",
   })[role] ?? "#7b7288";
 
+const FREE_HOSTED = "https://text.pollinations.ai/openai/v1";
+export const KEYLESS_HOST = "text.pollinations.ai";
+
 /**
- * Four specialists so the workshop opens with a team that actually runs: all local,
- * because a default roster that needs three keys is not a working default. Any card can
- * be pointed at a hosted provider the moment its key exists.
+ * Four specialists so the workshop opens with a team that actually runs.
+ *
+ * Local use gets Ollama. A production build is served from a cloud host, where the
+ * visitor's `127.0.0.1:11434` is not the server's Ollama: the same default would fail
+ * before the first token. The hosted default is keyless and public, so a deployed room
+ * can start without asking for three API keys; any card can be pointed elsewhere.
  */
 export function defaultRoster(): Specialist[] {
+  const base = import.meta.env.PROD
+    ? { kind: "openai" as const, baseUrl: FREE_HOSTED, apiKey: "", model: "openai" }
+    : { kind: "ollama" as const, baseUrl: providers.ollama.baseUrl, apiKey: "", model: providers.ollama.model };
   return [
-    { id: "atlas", name: "Atlas", role: "planner", kind: "ollama", baseUrl: providers.ollama.baseUrl, apiKey: "", model: providers.ollama.model },
-    { id: "vega", name: "Vega", role: "frontend", kind: "ollama", baseUrl: providers.ollama.baseUrl, apiKey: "", model: providers.ollama.model },
-    { id: "orion", name: "Orion", role: "backend", kind: "ollama", baseUrl: providers.ollama.baseUrl, apiKey: "", model: providers.ollama.model },
-    { id: "lyra", name: "Lyra", role: "reviewer", kind: "ollama", baseUrl: providers.ollama.baseUrl, apiKey: "", model: providers.ollama.model },
+    { id: "atlas", name: "Atlas", role: "planner", ...base },
+    { id: "vega", name: "Vega", role: "frontend", ...base },
+    { id: "orion", name: "Orion", role: "backend", ...base },
+    { id: "lyra", name: "Lyra", role: "reviewer", ...base },
   ];
+}
+
+function usesLoopback(baseUrl: string): boolean {
+  return /localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]/.test(baseUrl);
 }
 
 const ROSTER_KEY = "cortex.roster.v1";
@@ -200,13 +213,24 @@ async function readServerRoster(): Promise<ServerSpecialist[] | null> {
  * Entries this browser has but the harness does not are kept, not dropped: an edit made
  * in the workshop survives a reload and is published by the next run.
  */
+function usableRoster(list: Specialist[]): Specialist[] {
+  // A cloud-served UI cannot reach the visitor's loopback Ollama. Keep the card's name
+  // and role, but point it at the keyless hosted default instead of failing preflight.
+  if (!import.meta.env.PROD) return list;
+  return list.map((s) =>
+    usesLoopback(s.baseUrl)
+      ? { ...s, kind: "openai", baseUrl: FREE_HOSTED, apiKey: "", model: "openai" }
+      : s,
+  );
+}
+
 export async function hydrateRoster(): Promise<Specialist[]> {
   const server = await readServerRoster();
-  if (!server) return loadRoster();  // unreadable: keep what we have
+  if (!server) return usableRoster(loadRoster());  // unreadable: keep what we have
   const local = loadRoster();
   // `mergeKeys` already appends local drafts the server does not know; appending them
   // again here duplicated every draft and made a 3-person team look like 21 cards.
-  const merged = mergeKeys(local, server);
+  const merged = usableRoster(mergeKeys(local, server));
   saveRoster(merged);
   return merged;
 }
@@ -276,8 +300,9 @@ export function saveSelected(id: string) {
 
 export function isConfigured(s: Specialist) {
   if (!s.name.trim() || !s.baseUrl.trim() || !s.model.trim()) return false;
-  const local = s.kind === "ollama" || /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(s.baseUrl);
-  return local || Boolean(s.apiKey.trim()) || Boolean(s.has_key) || Boolean(s.configured);
+  const local = s.kind === "ollama" || usesLoopback(s.baseUrl);
+  const keyless = s.baseUrl.includes(KEYLESS_HOST);
+  return local || keyless || Boolean(s.apiKey.trim()) || Boolean(s.has_key) || Boolean(s.configured);
 }
 
 export function newSpecialist(index: number): Specialist {

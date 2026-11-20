@@ -99,3 +99,16 @@ def test_the_keyring_is_a_denied_path_for_model_tools():
     from ai_harness.modules.permissions import DENY_PATHS
 
     assert ".harness-keys.json" in DENY_PATHS
+
+
+def test_a_keyless_hosted_provider_is_ready_without_a_key():
+    free = Specialist(
+        id="free",
+        name="Free",
+        role="general",
+        baseUrl="https://text.pollinations.ai/openai/v1",
+        model="openai",
+    )
+    assert free.ready is True
+    paid = Specialist(id="paid", name="Paid", baseUrl="https://api.openai.com/v1", model="gpt-4.1-mini")
+    assert paid.ready is False
