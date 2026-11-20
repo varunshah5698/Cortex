@@ -47,7 +47,9 @@ const LOCAL_OPERATOR: User = {
 
 export async function me(): Promise<User | null> {
   const response = await fetch(`${API}/api/auth/me`, { credentials: "include" });
-  if (response.status === 401) return null;
+  // On loopback the API deliberately lets the operator through without an account.
+  // A 401 there means "no account needed", not "signed out".
+  if (response.status === 401) return onLoopback() ? LOCAL_OPERATOR : null;
   if (!response.ok) throw new Error("Cortex is not answering.");
   const data = (await response.json()) as { user?: User };
   return data.user ?? null;
