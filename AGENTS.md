@@ -77,6 +77,20 @@ Each line exists because something went wrong without it.
 14. A deep plan is critiqued by a different specialist (`REASON_CRITIC`) before code is
     written, and the code prompt carries that critique. The author grading its own plan
     was the weakness; do not drop the pass to save one call.
+15. A revision first tries `modules/agent_loop.py`: read, a targeted edit, check, repeat,
+    with a check-gated `done`. The whole-file rewrite is the fallback when a model cannot
+    speak the tool protocol, never the first choice. The prompt is `prompts.AGENT_REPAIR`,
+    the state is rebuilt from disk each turn, and any write still goes through
+    `FileManager` and `protected`.
+16. Native provider tools are an optimisation, not the contract. `llm.call_tools` serves
+    the OpenAI-compatible shape; a 4xx to `tools` disables it and the text protocol takes
+    over. Do not add a second set of tool implementations for a second wire format.
+17. A public share is `share.py` (one run, one path token, no `/api`) behind
+    `modules/cloud.py` (approval, TTL, teardown). Never point a tunnel at `preview.py`,
+    because that app serves every run by id.
+18. A browser check is a post-serve sensor: it runs only after an approved preview is
+    `ready`, reports through `run.browser` and a `verify` event, and never changes a
+    run's terminal `done`.
 
 ## Before you open a PR
 

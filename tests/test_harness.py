@@ -375,7 +375,8 @@ def test_verify_issues_become_reviewer_evidence(tmp_path: Path) -> None:
 
 def test_scaffold_follows_the_requested_stack(tmp_path: Path) -> None:
     _, react, react_files, _ = planner_agent.parse("not json at all", "build a react dashboard")
-    assert "src/App.tsx" in react_files and "index.html" not in react_files
+    # React now scaffolds its own HTML shell; the old fallback omitted it.
+    assert {"index.html", "src/App.tsx"} <= set(react_files)
     assert [u.file for u in react] == react_files
 
     _, python, python_files, _ = planner_agent.parse("", "a python fastapi service")

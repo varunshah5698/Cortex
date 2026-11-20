@@ -30,3 +30,4 @@ belong here. The component column is the part of the harness that owned the fail
 - Live verification is an HTTP probe, not a browser driving the UI; interaction bugs still
   need Playwright or a human.
 - The landing and build room clip at phone width; the office is a fixed-size canvas.
+| 2026-11-20 | `761b7c2bb692` | plan | package.json: package.json was declared by the plan but is still empty | package.json, src/App.tsx, src/index.css, src/main.tsx |

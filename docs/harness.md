@@ -25,7 +25,7 @@ Sources this design follows, in reading order:
 | Component | Question | Where |
 | --- | --- | --- |
 | System of record | What does it need to know? | `AGENTS.md` (map), `docs/` (detail), `README.md`, prompt fingerprints |
-| Tools | What can it actually do? | `src/ai_harness/tools/` + `modules/runner.py`, `modules/terminal`, `modules/web_search` |
+| Tools | What can it actually do? | `src/ai_harness/tools/` + `modules/agent_loop.py` (read/edit/check repair), `modules/runner.py`, `modules/terminal`, `modules/web_search` |
 | Feedback and verification | How does it know it worked? | Ruff, tests, `nodes/verify.py`, `modules/toolchain.py`, `modules/probe.py`, `evals/` |
 | Guardrails and permissions | What must it never do? | `modules/permissions.py`, origin/token check, separate preview origin, approval checkpoint |
 | Observability and memory | What happened, what carries over? | `events.jsonl`, `logs/harness.log`, `failures.md`, `todo.md`, `memory.md`, metrics |
@@ -58,6 +58,12 @@ grades it generously.
   agent re-reads; `events.jsonl` is the transcript; the file tree is the artifact.
 - Work is bounded before it starts: token, dollar, wall-clock and concurrency budgets are
   checked before a call, not after it.
+- A revision is a **tool loop**, not a blind rewrite: the author reads the real file,
+  makes a targeted edit, runs the deterministic checks and sees the result, bounded by
+  `HARNESS_AGENT_STEPS`. `done` is refused while the current check fails; a model that
+  cannot speak the protocol falls back to the old whole-file rewrite. The prompt is a
+  flat state block rebuilt from disk each turn, so context stays flat and the ledger —
+  not a chat transcript — is the memory.
 
 ## Tools and blast radius
 
@@ -87,6 +93,9 @@ Generated pages run on a separate origin with no `/api`, under a per-run nonce.
    structural verifier over the generated tree, the stack's own compiler.
 3. **Live**: the runner starts the real service, `probe.py` fetches the page and follows
    its assets; the preview shows install/build/start failures with their own output.
+4. **Browser**: `modules/browser.py` opens the served page in headless Chrome, reports
+   console/page/request errors and clicks up to two visible buttons. It is a post-serve
+   verdict, recorded as `run.browser`; it never retroactively turns a `done` run green.
 
 `scripts/verify.sh` is the one command: lint, format, tests, evals, types. The `Stop` hook
 runs it, so a turn cannot end on a broken build. A test or eval expectation is never edited
@@ -94,8 +103,12 @@ to make a run pass.
 
 ## Known gaps
 
-- Live verification is an HTTP probe, not a browser driving the UI; interaction bugs
-  still need a human or Playwright.
+- A public share is a temporary one-run tunnel, not a deployment. It has a capability
+  URL and a TTL, not accounts, per-user permissions or a custom domain; a real deployment
+  still needs a host and its own auth.
+- The browser tier drives Chrome over CDP and clicks up to two visible buttons. It is not
+  a Playwright suite: there are no assertions about visual layout, accessibility or long
+  interaction flows.
 - The planner produces files and work units, not a persisted feature list with pass/fail
   flags. The verifier checks structure; it cannot check product intent.
 - Context resets exist through per-run workspaces, but there is no cross-session handoff

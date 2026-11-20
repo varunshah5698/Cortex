@@ -174,7 +174,10 @@ ORIGINS = [
 # The public URL of a deployed instance. Render sets RENDER_EXTERNAL_URL; other hosts
 # can set HARNESS_PUBLIC_ORIGIN. Same-origin requests from this host are the UI, not a
 # foreign page, so the API guard treats it like loopback. Empty on a local checkout.
-PUBLIC_ORIGIN = (os.getenv("HARNESS_PUBLIC_ORIGIN") or os.getenv("RENDER_EXTERNAL_URL") or "").strip().rstrip("/")
+_public_url = os.getenv("HARNESS_PUBLIC_ORIGIN") or os.getenv("RENDER_EXTERNAL_URL") or ""
+if not _public_url and os.getenv("RENDER_EXTERNAL_HOSTNAME"):
+    _public_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME', '').strip()}"
+PUBLIC_ORIGIN = _public_url.strip().rstrip("/")
 if PUBLIC_ORIGIN and PUBLIC_ORIGIN not in ORIGINS:
     ORIGINS.append(PUBLIC_ORIGIN)
 

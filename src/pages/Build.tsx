@@ -6,16 +6,20 @@ import { hydrateRoster, isConfigured, loadRoster, type Specialist } from "../lib
 import {
   API,
   SERVICE_BUSY,
+  checkBrowser,
   fmtMs,
   fmtNumber,
   loadFile,
   liveUrl,
   previewUrl,
   serviceStatus,
+  shareStatus,
   startRun,
   startService,
+  startShare,
   stopRun,
   stopService,
+  stopShare,
   subscribe,
   type Depth,
   type FileRow,
@@ -23,6 +27,7 @@ import {
   type PlanUnit,
   type RunMetrics,
   type RunService,
+  type RunShare,
 } from "../lib/harness";
 
 type Tab = "preview" | "thoughts" | "team" | "runtime";
@@ -125,6 +130,9 @@ export default function Build() {
   const [finishedAt, setFinishedAt] = useState<number | null>(null);
   const [now, setNow] = useState(Date.now());
   const [service, setService] = useState<RunService | null>(null);
+  const [browserBusy, setBrowserBusy] = useState(false);
+  const [share, setShare] = useState<RunShare | null>(null);
+  const [shareBusy, setShareBusy] = useState(false);
   const [tools, setTools] = useState<
     { id: number; tool: string; result: string; ms: number; ok: boolean; phase?: string }[]
   >([]);
@@ -196,6 +204,59 @@ export default function Build() {
     } catch (err) {
       setService(null);
       setNotice(err instanceof Error ? err.message : "The harness did not answer — is it running on :8000?");
+    }
+  }, []);
+
+  // Tier 4: open the served page in headless Chrome. The report is also emitted on the
+  // run's event stream, so this button is for a fresh look, not the only way to see it.
+  const checkInBrowser = useCallback(async (id: string) => {
+    setBrowserBusy(true);
+    try {
+      const report = await checkBrowser(id);
+      setService((prev) => (prev ? { ...prev, browser: report } : prev));
+      setNotice(
+        report.skipped
+          ? `Browser check skipped · ${report.note ?? "no Chrome"}`
+          : report.ok
+            ? "Browser check clean — the page rendered and its controls answered"
+            : `Browser check found ${report.errors} issue(s) · ${report.issues[0]?.detail ?? "see runtime"}`,
+      );
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Browser check failed");
+    } finally {
+      setBrowserBusy(false);
+    }
+  }, []);
+
+  // A public share is a capability URL, not a second API. The first click is the
+  // approval prompt; the second carries the explicit approval.
+  const shareRun = useCallback(async (id: string, approve = false) => {
+    setShareBusy(true);
+    try {
+      const next = await startShare(id, approve);
+      setShare(next);
+      if (next.state === "needs_approval") {
+        setNotice(`Publishing this run will run: ${next.command ?? "the tunnel"}. Approve only if you mean it.`);
+      } else if (next.url) {
+        setNotice(`Public share ready · ${next.url}`);
+        void navigator.clipboard?.writeText(next.url).catch(() => {});
+      }
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Could not share this run");
+    } finally {
+      setShareBusy(false);
+    }
+  }, []);
+
+  const unshareRun = useCallback(async (id: string) => {
+    setShareBusy(true);
+    try {
+      setShare(await stopShare(id));
+      setNotice("Public share stopped");
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Could not stop the share");
+    } finally {
+      setShareBusy(false);
     }
   }, []);
 
@@ -431,23 +492,47 @@ export default function Build() {
     };
   }, [runId]);
 
-  // Poll only while the service is doing something; ready and failed are terminal.
-  const serviceState = service?.state;
+  // Reattach to a public share on reload; a tunnel outliving the tab is intentional.
   useEffect(() => {
-    if (!runId || !serviceState || !SERVICE_BUSY.includes(serviceState)) return;
+    if (!runId) {
+      setShare(null);
+      return;
+    }
     let alive = true;
+    shareStatus(runId)
+      .then((next) => {
+        if (alive && next.state !== "idle") setShare(next);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [runId]);
+
+  // Poll while the service is doing something, and for a short window after ready
+  // while the automatic browser check is still in flight. After that, `ready` is final
+  // and the Browser button is the way to ask again.
+  const serviceState = service?.state;
+  const browserPending = serviceState === "ready" && !service?.browser;
+  useEffect(() => {
+    if (!runId || !serviceState) return;
+    if (!SERVICE_BUSY.includes(serviceState) && !browserPending) return;
+    let alive = true;
+    let attempts = 0;
     const timer = setInterval(() => {
+      attempts += 1;
       serviceStatus(runId)
         .then((next) => {
           if (alive) setService(next);
         })
         .catch(() => {});
+      if (browserPending && attempts >= 20) clearInterval(timer);
     }, 1200);
     return () => {
       alive = false;
       clearInterval(timer);
     };
-  }, [runId, serviceState]);
+  }, [runId, serviceState, browserPending]);
 
   // A service that just became ready means a fresh document to load.
   useEffect(() => {
@@ -663,6 +748,42 @@ export default function Build() {
                             {running ? "Writing files…" : serviceState === "ready" ? "Restart" : "Run"}
                           </button>
                         )}
+                        <button
+                          className="pv-btn"
+                          disabled={browserBusy || serviceState !== "ready"}
+                          onClick={() => void checkInBrowser(runId)}
+                          title="Open the served page in Chrome: console errors, failed requests, one click"
+                        >
+                          <Icon name="eye" size={11} /> {browserBusy ? "Checking…" : "Browser"}
+                        </button>
+                        {share?.state === "ready" && share.url ? (
+                          <button
+                            className="pv-btn"
+                            disabled={shareBusy}
+                            onClick={() => void unshareRun(runId)}
+                            title={`Public until ${share.expires_at ?? "stopped"} · ${share.url}`}
+                          >
+                            <Icon name="link" size={11} /> Stop share
+                          </button>
+                        ) : share?.state === "needs_approval" ? (
+                          <button
+                            className="pv-btn"
+                            disabled={shareBusy}
+                            onClick={() => void shareRun(runId, true)}
+                            title="Publishes this one run on a public URL until stopped or the TTL expires"
+                          >
+                            <Icon name="globe" size={11} /> Approve &amp; share
+                          </button>
+                        ) : (
+                          <button
+                            className="pv-btn"
+                            disabled={shareBusy || serviceState !== "ready"}
+                            onClick={() => void shareRun(runId)}
+                            title="Publish this one run through a temporary public tunnel"
+                          >
+                            <Icon name="globe" size={11} /> {shareBusy ? "Sharing…" : "Share"}
+                          </button>
+                        )}
                         <button onClick={() => setFrame((v) => v + 1)} title="Reload">
                           <Icon name="history" size={13} />
                         </button>
@@ -681,6 +802,22 @@ export default function Build() {
                         {service.detail}
                         {service.port ? ` · :${service.port}` : ""}
                         {service.exit_code ? ` · exit ${service.exit_code}` : ""}
+                      </div>
+                    )}
+                    {service?.browser && (
+                      <div className="pv-detail">
+                        Browser check:{" "}
+                        {service.browser.skipped
+                          ? `skipped${service.browser.note ? ` · ${service.browser.note}` : ""}`
+                          : service.browser.ok
+                            ? `clean${service.browser.title ? ` · “${service.browser.title}”` : ""}`
+                            : `${service.browser.errors} issue(s) · ${service.browser.issues[0]?.detail ?? "see runtime"}`}
+                      </div>
+                    )}
+                    {share?.state === "ready" && share.url && (
+                      <div className="pv-detail">
+                        Public: <a href={share.url} target="_blank" rel="noreferrer">{share.url}</a>
+                        {share.expires_at ? ` · expires ${new Date(share.expires_at).toLocaleTimeString()}` : ""}
                       </div>
                     )}
                     {service?.detail_lines && service.detail_lines.length > 0 && (

@@ -1,0 +1,1 @@
+{"name": "regression-761b7c2bb692", "created": "2026-11-20T06:37:35.470441+00:00", "prompt": "bulid me a portfolio", "note": "promoted from a blocked run: package.json: package.json was declared by the plan but is still empty", "files": {"package.json": "", "src/main.tsx": "", "src/App.tsx": "", "src/index.css": ""}}

@@ -23,6 +23,12 @@ bash scripts/verify.sh
 `AGENTS.md` is the instruction file the coding agents read before they work: structure,
 the verified commands above, the conventions and the things they must not do.
 
+### Deploy
+
+`render.yaml` deploys the UI and the harness as one Render web service. See
+`docs/deploy.md` for the Blueprint steps, the required `HARNESS_BASIC_AUTH` password and
+the features that stay local (previews, sharing, browser checks).
+
 Open `http://127.0.0.1:5178/#/build`. Configure specialists first in the workshop
 (`#/setup`): each one is a provider, model and role. A key typed there is sent once to
 the harness and stored on the server; the browser keeps only the non-secret fields.
@@ -77,6 +83,30 @@ every service it started when it shuts down. Limits: `HARNESS_INSTALL_TIMEOUT`,
 
 ## Guardrails
 
+A revision is a bounded tool loop before it is a rewrite. The author reads the real
+file, applies a targeted `edit`, runs the same deterministic checks the reviewer sees,
+and repeats — up to `HARNESS_AGENT_STEPS`. `done` is refused while the current check
+fails, and a model that cannot produce the one-JSON-object protocol falls back to the
+old whole-file rewrite. The prompt is rebuilt from disk each turn (objective, findings,
+action ledger, an LRU working set of files, last observation) so the context stays flat
+instead of growing with the loop. Turn it off with `HARNESS_AGENT_LOOP=0`.
+
+OpenAI-compatible providers can take the same seven tools as native tool calls
+(`HARNESS_NATIVE_TOOLS`); a provider that rejects them falls back to the text protocol
+for the rest of the loop.
+
+After a preview answers, **headless Chrome opens it** (`modules/browser.py`,
+`scripts/browser_check.mjs`, no npm dependency): console errors, page exceptions, failed
+requests, an empty body, and whether up to two buttons change the page. The verdict is a
+`verify` event with `stage: "browser"` and `run.browser` in the ledger. It is a post-serve
+sensor, so it never turns a `done` run green after the fact. `HARNESS_BROWSER_CHECK=0`
+disables it.
+
+**Public share** publishes one ready run through a one-run origin (`share.py`) and a
+temporary tunnel (`modules/cloud.py`, `cloudflared` by default). The app has the run id
+baked in, a path token, and no `/api`; the first request is an approval prompt, and the
+URL expires with `HARNESS_SHARE_TTL`. It never exposes the multi-run preview app.
+
 A run is bounded and auditable, not just observable. Every call is priced from a
 model table and charged to the run's ledger; a token or dollar budget stops the run
 before the next request rather than after the damage; identical non-streaming
@@ -117,7 +147,8 @@ inside the sandbox.
 
 `/api` answers the UI and nothing else. A browser request must come from
 `HARNESS_ORIGINS`, or be same-origin with a literal loopback host (a rebound DNS name
-that points at 127.0.0.1 does not count); anything without browser provenance — curl, a script, another page — must present `X-Harness-Token`, from
+that points at 127.0.0.1 does not count), or be same-origin with the deployed
+`HARNESS_PUBLIC_ORIGIN` / `RENDER_EXTERNAL_URL`; anything without browser provenance — curl, a script, another page — must present `X-Harness-Token`, from
 `HARNESS_TOKEN` or the generated `.harness-token` (mode 0600). `GET /api/health` stays
 open so a UI can report an offline harness. File reads resolve the real path inside
 `runs/<id>` and refuse `..`, absolute paths and a sibling directory that merely shares a

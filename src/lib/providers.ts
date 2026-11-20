@@ -103,7 +103,8 @@ const SELECTED_KEY = "cortex.selected.v1";
 /** Python harness. Defined here because this module owns the roster wire protocol. */
 // The harness defaults to 8000; a second checkout can point its UI elsewhere with
 // VITE_HARNESS_URL so two people running the tree do not fight over one port.
-export const API = import.meta.env.VITE_HARNESS_URL ?? "http://127.0.0.1:8000";
+// A production build is served by the harness itself, so its API is same-origin.
+export const API = import.meta.env.VITE_HARNESS_URL ?? (import.meta.env.PROD ? "" : "http://127.0.0.1:8000");
 
 /**
  * Generated pages get their own origin (`ai_harness/preview.py`), so a script a model

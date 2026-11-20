@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cortex — a site overview, recorded from the running app</title>
+<style>
+  :root {
+    --bg: #0a0810;
+    --panel: #12101a;
+    --panel-2: #16131f;
+    --line: #241f30;
+    --ink: #f3ece1;
+    --dim: #9a93a8;
+    --faint: #6f6a80;
+    --mint: #8ff0c9;
+    --violet: #a08bf0;
+    --amber: #f2b544;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--mono); -webkit-font-smoothing: antialiased;
+    background-image:
+      radial-gradient(900px 520px at 50% -10%, #221738 0%, transparent 62%),
+      radial-gradient(700px 400px at 88% 8%, #1a2430 0%, transparent 60%);
+    background-repeat: no-repeat;
+  }
+  a { color: var(--mint); text-decoration: none; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 28px 28px 90px; }
+
+  header.top {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 18px; padding-bottom: 22px; border-bottom: 1px solid var(--line); flex-wrap: wrap;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-size: 14px; letter-spacing: .02em; }
+  .mark {
+    width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center;
+    background: linear-gradient(150deg, #6b4fd0, #2b1d4d); color: #fff; font-size: 12px;
+    box-shadow: 0 0 0 1px #3a2c5c inset;
+  }
+  .meta { display: flex; gap: 16px; color: var(--faint); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; flex-wrap: wrap; }
+  .meta b { color: var(--dim); font-weight: 400; }
+
+  h1 { font-size: clamp(28px, 4.2vw, 46px); line-height: 1.06; letter-spacing: -.02em; margin: 34px 0 14px; font-weight: 600; }
+  h1 em { font-style: normal; color: var(--violet); }
+  .lede { color: var(--dim); font-size: 14.5px; line-height: 1.75; max-width: 74ch; margin: 0 0 8px; }
+  .lede b { color: var(--ink); font-weight: 500; }
+
+  /* ---------- the film ---------- */
+  .film { margin-top: 30px; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: #07050b; }
+  .film-bar {
+    display: flex; align-items: center; gap: 10px; padding: 9px 14px;
+    border-bottom: 1px solid var(--line); background: var(--panel); font-size: 11px;
+    letter-spacing: .14em; text-transform: uppercase; color: var(--faint);
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 10px var(--mint); }
+  .film-bar .grow { flex: 1; }
+  .film-bar code { color: var(--dim); letter-spacing: .04em; text-transform: none; font-size: 11px; }
+  .sound {
+    font: inherit; font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--ink); background: #1d1830; border: 1px solid #3a3150; border-radius: 999px;
+    padding: 5px 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+  }
+  .sound:hover { border-color: var(--mint); color: var(--mint); }
+  a.sound { text-decoration: none; }
+  .sound.on { background: var(--mint); color: #0d0a12; border-color: var(--mint); }
+  .stage { position: relative; aspect-ratio: 16 / 9; background: #07050b; }
+  .stage video { width: 100%; height: 100%; display: block; object-fit: cover; }
+  .now {
+    position: absolute; left: 12px; bottom: 12px; display: flex; align-items: center; gap: 8px;
+    padding: 7px 11px; border-radius: 8px; background: rgba(7,5,11,.82); border: 1px solid #2a2338;
+    font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink); pointer-events: none;
+  }
+  .now span.t { color: var(--faint); }
+  .rail { height: 3px; background: #191423; }
+  .rail i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--violet), var(--mint)); transition: width .12s linear; }
+
+  .chapters { display: flex; gap: 8px; flex-wrap: wrap; padding: 14px; background: var(--panel); border-top: 1px solid var(--line); }
+  .chapters button {
+    font: inherit; font-size: 11.5px; color: var(--dim); background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 999px; padding: 7px 12px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 8px; transition: color .15s, border-color .15s, background .15s;
+  }
+  .chapters button:hover { color: var(--ink); border-color: #3a3150; }
+  .chapters button.on { color: #0d0a12; background: var(--mint); border-color: var(--mint); }
+  .chapters button.on i { color: #0d0a12; opacity: .7; }
+  .chapters i { font-style: normal; font-size: 10px; color: var(--faint); letter-spacing: .06em; }
+
+  /* ---------- sections ---------- */
+  section { margin-top: 56px; }
+  .kicker { display: block; font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: var(--faint); margin-bottom: 10px; }
+  h2 { font-size: clamp(20px, 2.6vw, 27px); letter-spacing: -.01em; margin: 0 0 12px; font-weight: 600; }
+  h2 span { color: var(--violet); }
+  section > p { color: var(--dim); font-size: 13.5px; line-height: 1.8; max-width: 78ch; margin: 0 0 18px; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+  .card { border: 1px solid var(--line); border-radius: 12px; padding: 16px 16px 18px; background: linear-gradient(180deg, var(--panel), #0d0b14); }
+  .card h3 { margin: 0 0 8px; font-size: 13px; letter-spacing: .04em; font-weight: 500; display: flex; align-items: center; gap: 8px; }
+  .card p { margin: 0; color: var(--dim); font-size: 12.5px; line-height: 1.7; }
+  .card .n { color: var(--violet); font-size: 10px; letter-spacing: .16em; }
+
+  .stages { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .stage-step { border: 1px solid var(--line); border-radius: 10px; padding: 12px 13px; background: var(--panel); }
+  .stage-step b { display: block; font-size: 12px; font-weight: 500; margin-bottom: 5px; }
+  .stage-step span { color: var(--faint); font-size: 11px; line-height: 1.55; display: block; }
+  .stage-step i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 6px; background: var(--violet); }
+
+  .crew { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 14px; }
+  .crew span {
+    font-size: 11px; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--dim);
+  }
+  .crew span b { color: var(--ink); font-weight: 500; }
+  .crew span i { color: var(--faint); font-style: normal; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--faint); font-weight: 400; font-size: 10.5px; letter-spacing: .16em; text-transform: uppercase; width: 30%; }
+  td { color: var(--ink); }
+  td small { display: block; color: var(--faint); font-size: 11px; margin-top: 3px; }
+  .num { color: var(--mint); }
+
+  pre.shell {
+    margin: 0; padding: 14px 16px; border-radius: 10px; border: 1px solid var(--line);
+    background: #0c0a13; color: var(--mint); font-size: 12.5px; overflow-x: auto; line-height: 1.7;
+  }
+  pre.shell em { color: var(--faint); font-style: normal; }
+  .foot { margin-top: 60px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--faint); font-size: 11px; display: flex; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+  @media (max-width: 640px) {
+    .wrap { padding: 20px 18px 70px; }
+    .now { left: 8px; bottom: 8px; font-size: 10px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="brand"><span class="mark">C</span> Cortex · site overview</div>
+    <div class="meta">
+      <span>recorded <b>from 127.0.0.1:5178</b></span>
+      <span>run <b>06847880c95b</b></span>
+      <span><b>53s</b> · 1280×720</span>
+    </div>
+  </header>
+
+  <h1>This is not a mockup.<br />It is the <em>site</em>, filmed while it ran.</h1>
+  <p class="lede">
+    Every frame below came out of the running app: the landing page, the build room replaying a
+    real run's event log, the focus timer that run's files actually serve, and the source it wrote.
+    Nothing is redrawn for the camera. <b>The film is a screen recording of the website</b>, captured
+    by <code>scripts/record_site.mjs</code> over Chrome's DevTools protocol and encoded with ffmpeg.
+  </p>
+
+  <div class="film">
+    <div class="film-bar">
+      <span class="dot"></span>
+      <span id="state">playing</span>
+      <span class="grow"></span>
+      <button class="sound" id="sound">voice over</button>
+      <a class="sound" href="site-overview.mp4" download="cortex-site-overview.mp4">download mp4</a>
+      <code>public/site-overview.mp4</code>
+    </div>
+    <div class="stage">
+      <video id="film" src="site-overview.mp4" poster="site-overview-poster.jpg"
+             muted playsinline autoplay loop controls preload="metadata"></video>
+      <div class="now"><span class="t" id="clock">0:00</span> <span id="label">the site</span></div>
+    </div>
+    <div class="rail"><i id="rail"></i></div>
+    <div class="chapters" id="chapters">
+      <button data-at="0"><i>0:00</i> the site</button>
+      <button data-at="3.1"><i>0:03</i> the loop</button>
+      <button data-at="5.5"><i>0:05</i> models</button>
+      <button data-at="8.5"><i>0:08</i> build room</button>
+      <button data-at="16.1"><i>0:16</i> reasoning</button>
+      <button data-at="25.2"><i>0:25</i> the team</button>
+      <button data-at="33"><i>0:33</i> served build</button>
+      <button data-at="41.4"><i>0:41</i> the files</button>
+      <button data-at="49.8"><i>0:49</i> close</button>
+    </div>
+  </div>
+
+  <section>
+    <span class="kicker">What is on screen</span>
+    <h2>The build environment is the <span>whole product</span>.</h2>
+    <p>
+      One prompt goes in at the bottom of the room. A planner splits it into work units, every
+      specialist publishes an interface before writing anything, all of them reason out loud and
+      then write their own file at the same time, a reviewer reads the result against the verifier's
+      findings, and the runner installs and serves what came out.
+    </p>
+    <div class="cards">
+      <div class="card">
+        <h3><span class="n">01</span> One room, seven seats</h3>
+        <p>Each seat is a provider, model and role picked in the workshop. The room shows who is
+          thinking, who is writing, and who is waiting on a review.</p>
+      </div>
+      <div class="card">
+        <h3><span class="n">02</span> Reasoning you can read</h3>
+        <p>Every file is written twice: once as deliberation in the Reasoning feed, once as code.
+          The feed in the film is that run's own transcript.</p>
+      </div>
+      <div class="card">
+        <h3><span class="n">03</span> The preview is a service</h3>
+        <p>The right panel is not a screenshot. The runner detected a static page, served it on a
+          free loopback port, and the panel frames the running document.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <span class="kicker">The loop</span>
+    <h2>Five stages, one budget, no silent failures.</h2>
+    <div class="stages">
+      <div class="stage-step"><b><i></i>Plan</b><span>objective, work units, owners, empty files scaffolded</span></div>
+      <div class="stage-step"><b><i></i>Research</b><span>web search and page text, turned into notes</span></div>
+      <div class="stage-step"><b><i></i>Contracts</b><span>each specialist publishes its file's interface</span></div>
+      <div class="stage-step"><b><i></i>Build</b><span>reason, then write, concurrently</span></div>
+      <div class="stage-step"><b><i></i>Review</b><span>verify, findings, Q&amp;A, rewrites, repair rounds</span></div>
+    </div>
+    <div class="crew">
+      <span><b>Scout</b> <i>research</i></span>
+      <span><b>Atlas</b> <i>planner</i></span>
+      <span><b>Writer</b> <i>writing</i></span>
+      <span><b>Vega</b> <i>frontend</i></span>
+      <span><b>Orion</b> <i>backend</i></span>
+      <span><b>Verify</b> <i>checks</i></span>
+      <span><b>Lyra</b> <i>review</i></span>
+      <span><i>gemma4:e4b · local Ollama</i></span>
+    </div>
+  </section>
+
+  <section>
+    <span class="kicker">The run in the film</span>
+    <h2>Real numbers, read off the run's own ledger.</h2>
+    <table>
+      <tr><th>request</th><td>Build a small focus timer in plain HTML, CSS and JavaScript: 25-minute countdown, start/pause/reset, session history in localStorage, keyboard shortcuts, calm dark theme.</td></tr>
+      <tr><th>artifacts</th><td>index.html <span class="num">130L</span> · src/style.css <span class="num">185L</span> · src/script.js <span class="num">258L</span><small>written by Vega, Orion and Writer; the log they came from is 11,464 events</small></td></tr>
+      <tr><th>spend</th><td><span class="num">37,232</span> tokens over <span class="num">21</span> provider calls · $0.00<small>a local model, priced at zero; the cap was 600k tokens and $5.00, checked before every call</small></td></tr>
+      <tr><th>review</th><td>The verifier found four script-to-markup id mismatches and the work went back to the authors.<small>the Revision bubbles in the room are that pass: revised index.html, style.css and script.js re-shipped</small></td></tr>
+      <tr><th>serve</th><td>A static page, served exactly as written<small>modules/runner.py picked a free loopback port; the preview panel frames the live document, not a render of it</small></td></tr>
+    </table>
+  </section>
+
+  <section>
+    <span class="kicker">Why it can be trusted on screen</span>
+    <h2>Guarantees that show up as behaviour, not copy.</h2>
+    <div class="cards">
+      <div class="card"><h3>Budgets are checked first</h3><p>The token and dollar cap is read before the next request, so a run stops between calls instead of after the damage.</p></div>
+      <div class="card"><h3>Running code needs a yes</h3><p>Installs, builds and model-authored servers are an approval in the permissions table. The default is deny.</p></div>
+      <div class="card"><h3>Generated code has its own origin</h3><p>Previews are served by a second app with no <code>/api</code>, framed without same-origin, so a generated script cannot read the roster.</p></div>
+      <div class="card"><h3>A check outranks an opinion</h3><p>The verifier is deterministic and its findings are handed to the reviewer, which cannot approve past a failing check.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <span class="kicker">Record it again</span>
+    <h2>The film is a build artifact, not a one-off.</h2>
+    <p>With the harness on <code>:8000</code> and the UI on <code>:5178</code>, the recorder films whatever the site is doing at that moment and writes an MP4:</p>
+<pre class="shell"><em># tour the running app and capture real frames</em>
+node scripts/record_site.mjs 06847880c95b public/site-overview.mp4
+
+<em># it waits for the room to reach the run's done event and for the</em>
+<em># served preview to be ready, so the film never shows an empty lobby</em>
+
+<em># then put the voice over on it: say per scene, mixed onto the</em>
+<em># picture with -c:v copy, so no frame is re-encoded</em>
+node scripts/narrate_site.mjs</pre>
+  </section>
+
+  <div class="foot">
+    <span>Cortex · chain-of-command harness · v0.1</span>
+    <span>footage: public/site-overview.mp4 · recorder: scripts/record_site.mjs</span>
+  </div>
+</div>
+
+<script>
+  const film = document.getElementById("film");
+  const rail = document.getElementById("rail");
+  const clock = document.getElementById("clock");
+  const label = document.getElementById("label");
+  const state = document.getElementById("state");
+  const buttons = [...document.querySelectorAll("#chapters button")];
+  const sound = document.getElementById("sound");
+
+  const names = [
+    [0, "the site"],
+    [3.1, "the loop"],
+    [5.5, "models"],
+    [8.5, "build room"],
+    [16.1, "reasoning feed"],
+    [25.2, "the team"],
+    [33, "served build"],
+    [41.4, "the files"],
+    [49.8, "close"],
+  ];
+
+  const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+
+  function paint() {
+    const t = film.currentTime || 0;
+    const total = film.duration || 53.2;
+    rail.style.width = `${Math.min(100, (t / total) * 100)}%`;
+    clock.textContent = fmt(t);
+    let name = names[0][1];
+    let index = 0;
+    names.forEach(([at, n], i) => {
+      if (t + 0.35 >= at) { name = n; index = i; }
+    });
+    label.textContent = name;
+    buttons.forEach((b, i) => b.classList.toggle("on", i === index));
+  }
+
+  film.addEventListener("timeupdate", paint);
+  film.addEventListener("loadedmetadata", paint);
+  film.addEventListener("play", () => (state.textContent = "playing"));
+  film.addEventListener("pause", () => (state.textContent = "paused"));
+  paint();
+
+  buttons.forEach((b) => {
+    b.addEventListener("click", () => {
+      film.currentTime = Number(b.dataset.at);
+      film.play().catch(() => {});
+      paint();
+    });
+  });
+
+  // Browsers only autoplay muted, so the voice is one click away and labelled as such.
+  const mute = () => {
+    sound.textContent = "voice over";
+    sound.classList.remove("on");
+  };
+  sound.addEventListener("click", () => {
+    film.muted = !film.muted;
+    if (!film.muted) {
+      sound.textContent = "sound on";
+      sound.classList.add("on");
+      film.play().catch(() => {});
+    } else {
+      mute();
+    }
+  });
+  film.addEventListener("volumechange", () => (film.muted ? mute() : null));
+</script>
+</body>
+</html>

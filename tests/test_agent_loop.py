@@ -79,6 +79,9 @@ def _checker(run: FakeRun, clean_when: str):
 
 
 def _run(monkeypatch, script: Script) -> None:
+    # The text-protocol tests must not reach a provider. Native tools have their own
+    # tests below, which patch NATIVE_TOOLS back on explicitly.
+    monkeypatch.setattr(agent_loop, "NATIVE_TOOLS", False)
     monkeypatch.setattr(agent_loop.llm, "call", script)
 
 
@@ -253,6 +256,74 @@ def test_harness_bookkeeping_cannot_be_rewritten_by_the_loop(tmp_path: Path, mon
     assert not (tmp_path / "todo.md").exists()
     failed = [event for event in run.events if event.get("type") == "tool" and not event.get("ok")]
     assert failed and "harness-owned" in failed[0]["error"], failed
+
+
+def test_native_tool_calls_drive_the_same_loop(tmp_path: Path, monkeypatch) -> None:
+    broken = "<html><body><script>document.getElementById('ghost')</script></body></html>\n"
+    run = FakeRun(tmp_path, {"index.html": broken})
+    agent = Specialist(id="vega", name="Vega", role="frontend", model="stub")
+    run.specialists = [agent]
+    thrash.reset(run.run_id)
+    replies = [
+        {"tool": "read", "args": {"path": "index.html"}, "thought": "look"},
+        {
+            "tool": "edit",
+            "args": {
+                "path": "index.html",
+                "find": "getElementById('ghost')",
+                "replace": "getElementById('real')",
+            },
+            "thought": "fix",
+        },
+        {"tool": "done", "args": {"summary": "fixed"}, "thought": "clean"},
+    ]
+
+    async def native(_agent, _messages, _tools):
+        return replies.pop(0), "", Usage(prompt_tokens=4, completion_tokens=2, calls=1, ms=1)
+
+    async def no_text(*_args, **_kwargs):
+        raise AssertionError("native tools should not fall back to the text call")
+
+    monkeypatch.setattr(agent_loop, "NATIVE_TOOLS", True)
+    monkeypatch.setattr(agent_loop.llm, "supports_native_tools", lambda _spec: True)
+    monkeypatch.setattr(agent_loop.llm, "call_tools", native)
+    monkeypatch.setattr(agent_loop.llm, "call", no_text)
+
+    changed = asyncio.run(
+        agent_loop.repair(run, agent, "index.html", "missing id", _checker(run, "getElementById('real')"))
+    )
+
+    assert changed is True
+    assert "getElementById('real')" in run.fm.read("index.html")
+    assert not replies
+
+
+def test_native_tools_fall_back_to_the_text_protocol(tmp_path: Path, monkeypatch) -> None:
+    run = FakeRun(tmp_path, {"index.html": "<html><body>ok</body></html>\n"})
+    agent = Specialist(id="vega", name="Vega", role="frontend", model="stub")
+    run.specialists = [agent]
+    thrash.reset(run.run_id)
+    calls = {"native": 0, "text": 0}
+
+    async def native(_agent, _messages, _tools):
+        calls["native"] += 1
+        raise agent_loop.llm.NativeToolsUnsupported("tools are not implemented")
+
+    async def text(_agent, _messages, **_kwargs):
+        calls["text"] += 1
+        return '{"tool":"done","args":{}}', Usage(prompt_tokens=4, completion_tokens=2, calls=1, ms=1)
+
+    monkeypatch.setattr(agent_loop, "NATIVE_TOOLS", True)
+    monkeypatch.setattr(agent_loop.llm, "supports_native_tools", lambda _spec: True)
+    monkeypatch.setattr(agent_loop.llm, "call_tools", native)
+    monkeypatch.setattr(agent_loop.llm, "call", text)
+
+    changed = asyncio.run(
+        agent_loop.repair(run, agent, "index.html", "nothing", _checker(run, "<body>ok"), max_steps=2)
+    )
+
+    assert changed is False
+    assert calls == {"native": 1, "text": 1}
 
 
 def test_parse_step_tolerates_fences_prose_and_flat_args() -> None:

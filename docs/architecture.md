@@ -85,6 +85,50 @@ check that read the files.
 2. `compose()` — the file, written against the agent's own deliberation. The model may
    emit `<<<FILE path>>>` markers to start another file.
 
+## The repair loop
+
+A review finding is usually one broken name. Until `modules/agent_loop.py` existed, the
+only way to change it was to generate the whole file again, which is how a weak model
+loses the parts that already worked. The revise and repair paths now try a bounded tool
+loop first:
+
+```
+read → edit → check → (fix | done)
+```
+
+The protocol is one JSON object per turn (`{"thought", "tool", "args"}`), parsed
+tolerantly from fences or prose. It is deliberately *not* provider-native tool calling:
+every OpenAI-compatible endpoint and Ollama can use it, including models that never
+implemented the tools field. Tools are `list`, `read`, `search`, `edit`, `write`, `check`
+and `done`; every write goes through `FileManager` and `protected`, so the sandbox and the
+frozen-test rule still hold.
+
+Loop engineering is in the bounds, not the prompt: `HARNESS_AGENT_STEPS` caps the turns,
+two malformed turns fall back to the whole-file rewrite, two checks with the same issues
+stop the loop, `thrash` refuses identical repeated calls, and `done` is refused while the
+current check has errors. A check is forced after an edit, so success cannot be declared
+on a stale report.
+
+Context engineering is in the shape of the call: the prompt is rebuilt from disk each
+turn as a flat state block — objective and findings pinned in the system prompt, then an
+action ledger, the last check, an LRU working set of at most
+`HARNESS_AGENT_ACTIVE_FILES` files, and the last observation, all under
+`HARNESS_AGENT_CONTEXT_CHARS`. There is no growing chat to compact and nothing important
+lives only in the transcript. If the block is over budget, the oldest active file is
+evicted first, then the observation, then the ledger; the objective and the findings can
+never be evicted. The author can always re-read a file, and the ledger says that it did.
+
+`tools/` remains the only place a capability is implemented; the loop is the caller. Each
+turn emits the existing `tool` event, each `check` emits the existing `verify` event, and
+the reasoning sentence is a `think` event, so the UI needs no new event type.
+
+An OpenAI-compatible endpoint can also receive the same seven tools as **native tool
+calls** (`modules/llm.py::call_tools`, non-streaming). The loop tries native first, then
+falls back to the text protocol for the rest of the run if the provider answers 4xx to
+`tools`. Native calls are an optimisation: the state block, the check gate and the tool
+implementations are identical, and Anthropic, Google and native Ollama keep the text
+protocol rather than growing three more wire shapes for an optimisation.
+
 ## HTTP surface
 
 `main.py` guards every `/api` route before the handler runs. Artifacts are not served by
@@ -144,7 +188,10 @@ Server-sent events on `GET /api/run/{id}/events`:
 between files, per stack). Tier 2 is the artifact's own toolchain (`modules/toolchain.py`:
 Python compiled in-process, the project's `tsc --noEmit` when a run installed TypeScript).
 Tier 3 is `POST /api/run/{id}/preview-check`, which probes the live service and the assets
-its HTML names; it emits a `verify` event with `stage: "preview"`.
+its HTML names; it emits a `verify` event with `stage: "preview"`. Tier 4 is
+`POST /api/run/{id}/browser-check` (also run automatically once a preview answers), which
+opens the page in Chrome and emits `stage: "browser"` with console, page, request and
+interaction findings.
 
 Processes the runner starts are contained by `modules/sandbox.py`: on macOS every child is
 wrapped in `sandbox-exec` with writes denied under the owner's home (except the run
@@ -172,6 +219,28 @@ state plus the log tail, and the UI polls while the service is busy. Every servi
 dev server, `uvicorn` for an ASGI app — gets a free loopback port, and the UI points the
 preview straight at it. A `<<<FILE path>>>` section therefore becomes a file that can
 actually be built, not just a file that exists.
+
+### Tier 4: a real browser
+
+`modules/browser.py` + `scripts/browser_check.mjs` drive headless Chrome over CDP, the
+same path the site recorder uses, with no npm dependency. They report a page error, a
+console error, a failed request, an HTTP error, an empty body, and whether up to two
+visible buttons actually change the page when clicked. The result is a `verify` event
+with `stage: "browser"` and is stored as `run.browser`; it is a post-serve sensor, so it
+never flips the pipeline's `done`. A machine without Chrome reports `skipped`, not a
+false pass.
+
+### Public shares
+
+`POST /api/run/<id>/share` publishes **one** ready run through `share.py`, a separate app
+with the run id baked in and a path token, plus `modules/cloud.py`, which owns the tunnel
+process. It never points a tunnel at `preview.py` (that app serves every run by id) and
+never at `/api`. The first request returns `needs_approval` with the command; the second
+carries `approve=1`. The share stops on request, when the preview stops, on harness
+shutdown, or at `HARNESS_SHARE_TTL`. The default provider is `cloudflared`; a custom
+provider must be set as `HARNESS_TUNNEL_COMMAND` with a `{url}` placeholder. The public
+origin is a capability URL, not an account system: anyone with it can view the run until
+it expires.
 
 ## Storage
 

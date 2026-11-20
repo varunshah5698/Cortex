@@ -24,6 +24,7 @@ evals/results/
 # Local course material and the agent's own scratch directory.
 .course-ref/
 .freebuff/
+brag-output-*/
 
 .DS_Store
 

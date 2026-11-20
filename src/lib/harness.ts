@@ -271,6 +271,21 @@ export type ServiceState =
   | "stopped"
   | "needs_approval";
 
+/** What a real browser saw: the tier the static checks and HTTP probe cannot see. */
+export type BrowserReport = {
+  ok: boolean;
+  skipped?: boolean;
+  stage: "browser";
+  errors: number;
+  warnings: number;
+  checked: number;
+  issues: { file: string; level: string; code: string; detail: string }[];
+  url?: string;
+  title?: string;
+  interactions?: { label: string; clicked: boolean; changed: boolean; newErrors: number }[];
+  note?: string;
+};
+
 /** The live service a run's files were installed, built and started as. */
 export type RunService = {
   run_id: string;
@@ -288,6 +303,8 @@ export type RunService = {
   detail_lines?: string[];
   /** Whether the processes are contained, in the service's own words. */
   sandbox?: string;
+  /** The last browser verdict, when the served page has been opened in Chrome. */
+  browser?: BrowserReport | null;
   logs: string[];
 };
 
@@ -312,6 +329,47 @@ export async function stopService(runId: string): Promise<RunService> {
 
 export async function serviceStatus(runId: string): Promise<RunService> {
   return service(await fetch(`${API}/api/run/${runId}/serve`));
+}
+
+/** A one-run public share: the tunnel's URL, or the approval it is waiting on. */
+export type ShareState = "idle" | "needs_approval" | "starting" | "ready" | "stopped" | "failed";
+
+export type RunShare = {
+  run_id: string;
+  state: ShareState;
+  url: string | null;
+  detail?: string;
+  command?: string;
+  expires_at?: string | null;
+  logs?: string[];
+};
+
+export async function startShare(runId: string, approve = false): Promise<RunShare> {
+  const query = approve ? "?approve=1" : "";
+  const res = await fetch(`${API}/api/run/${runId}/share${query}`, { method: "POST" });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { detail?: string };
+    throw new Error(body.detail || `share failed (${res.status})`);
+  }
+  return (await res.json()) as RunShare;
+}
+
+export async function stopShare(runId: string): Promise<RunShare> {
+  return (await (await fetch(`${API}/api/run/${runId}/share/stop`, { method: "POST" })).json()) as RunShare;
+}
+
+export async function shareStatus(runId: string): Promise<RunShare> {
+  return (await (await fetch(`${API}/api/run/${runId}/share`)).json()) as RunShare;
+}
+
+/** Open the served page in Chrome: console errors, failed requests, one click. */
+export async function checkBrowser(runId: string): Promise<BrowserReport> {
+  const res = await fetch(`${API}/api/run/${runId}/browser-check`, { method: "POST" });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { detail?: string };
+    throw new Error(body.detail || `browser check failed (${res.status})`);
+  }
+  return (await res.json()) as BrowserReport;
 }
 
 export const SERVICE_BUSY: ServiceState[] = ["detecting", "installing", "building", "starting"];

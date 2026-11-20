@@ -92,7 +92,9 @@ ws.addEventListener("message", (event) => {
     return;
   }
   if (msg.method === "Page.screencastFrame") {
-    frames.push({ data: msg.params.data, ts: msg.params.metadata.timestamp });
+    // Arrival time, not the frame's own timestamp: a page that sits still paints no
+    // frames, and the hold it was meant to have must survive into the encode.
+    frames.push({ data: msg.params.data, ts: Date.now() / 1000 });
     send("Page.screencastFrameAck", { sessionId: msg.params.sessionId });
   }
 });
@@ -114,30 +116,33 @@ const go = async (hash) => {
   await evaluate(`(() => { window.location.hash = ${JSON.stringify(hash)}; return true; })()`);
 };
 
-/** A cut: cover the viewport, swap the page underneath, uncover. */
-const FADE = `(() => {
-  let el = document.getElementById("__film");
-  if (!el) {
-    el = document.createElement("div");
-    el.id = "__film";
-    el.style.cssText = "position:fixed;inset:0;background:#07050b;z-index:2147483647;pointer-events:none;transition:opacity 200ms linear;opacity:1";
-    document.body.appendChild(el);
-  }
-  return true;
-})()`;
-const fadeTo = (value) =>
-  evaluate(`(() => { const el = document.getElementById("__film");
-    if (el) { el.style.opacity = ${value}; } return true; })()`);
+/** A cut: cover the viewport, swap the page underneath, take the cover away.
+ *  The cover is a real element that is removed, never a fade-out that can be left on
+ *  screen: a stuck overlay is minutes of black in the finished film. */
+const cover = () =>
+  evaluate(`(() => {
+    let el = document.getElementById("__film");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "__film";
+      el.style.cssText = "position:fixed;inset:0;background:#07050b;z-index:2147483647;pointer-events:none;opacity:1";
+      document.body.appendChild(el);
+    }
+    return true;
+  })()`).catch(() => {});
 
+const uncover = () => evaluate(`(() => {
+  const el = document.getElementById("__film");
+  if (el) el.remove();
+  return true;
+})()`).catch(() => {});
+
+/** A cut: navigate, let the page paint, then make sure nothing of ours is on top.
+ *  Hard cuts on purpose: a cover element that outlives its page is minutes of black. */
 const cut = async (fn, settle = 900) => {
-  /* Cover, swap, uncover: a cut, not five seconds of black over the best part. */
-  await evaluate(FADE).catch(() => {});
-  await fadeTo(1);
-  await sleep(240);
   await fn();
   await sleep(settle);
-  await evaluate(FADE).catch(() => {});
-  await fadeTo(0);
+  await uncover();
 };
 
 const scrollTo = (selector, offset = 0, ms = 3200) => {
@@ -213,7 +218,22 @@ await send("Page.startScreencast", { format: "jpeg", quality: 94, maxWidth: W, m
 t0 = Date.now();
 await sleep(400);
 mark("landing");
-await fadeTo(0);
+await uncover();
+
+// A still page paints no frames, and a screencast only captures paints: this nearly
+// invisible 2px element keeps the compositor ticking so holds keep their real length.
+await evaluate(`(() => {
+  if (document.getElementById("__tick")) return true;
+  const style = document.createElement("style");
+  style.textContent = "#__tick{position:fixed;left:0;top:0;width:2px;height:2px;opacity:.02;background:#000;" +
+    "animation:__tick .1s steps(2,end) infinite;pointer-events:none;z-index:0}" +
+    "@keyframes __tick{from{transform:translateX(0)}to{transform:translateX(1px)}}";
+  document.head.appendChild(style);
+  const tick = document.createElement("div");
+  tick.id = "__tick";
+  document.body.appendChild(tick);
+  return true;
+})()`).catch(() => {});
 
 // --- landing: the hero, then the sections beneath it -------------------------
 await sleep(1800);
@@ -240,10 +260,10 @@ if (!started) throw new Error("the build room never picked up the run — is the
 await sleep(7000);
 mark("build:reasoning");
 await clickTab("Reasoning");
-await sleep(5000);
+await sleep(9000);
 mark("build:team");
 await clickTab("Team");
-await sleep(4500);
+await sleep(6000);
 mark("build:runtime");
 await clickTab("Runtime");
 // The replay is the run's own log, so the room reports "Shipped" when it reaches
@@ -268,16 +288,17 @@ await cut(() => go("/files"), 900);
 // The explorer loads its rows from /api: click a source file once they exist.
 await waitFor(`(() => document.querySelectorAll(".vault-file").length > 1)()`, 12000);
 await clickFirst(".vault-file", "script.js");
-await sleep(6000);
-mark("metrics");
-await cut(() => go("/metrics"), 900);
-await sleep(6500);
+await sleep(4000);
+await evaluate(`(() => { const view = document.querySelector(".vault-view pre, .vault-view code, .vault-view");
+  const scroller = [...document.querySelectorAll(".vault-view *")].find((el) => el.scrollHeight > el.clientHeight + 40);
+  if (scroller) scroller.scrollTop = 320; return true; })()`).catch(() => {});
+await sleep(3000);
 
 // --- back to the top, then out ----------------------------------------------
 mark("close");
 await cut(() => go("/"), 500);
 await sleep(2200);
-await fadeTo(1);
+await cover();
 await sleep(700);
 await send("Page.stopScreencast");
 ws.close();
@@ -286,19 +307,17 @@ chrome.kill();
 console.log(`captured ${frames.length} frames`);
 if (frames.length < 30) throw new Error("too few frames captured");
 
-const stamp = frames[0].ts;
+// Each frame holds until the *next* one arrived — a frame's own arrival gap belongs to
+// the frame before it, and getting that backwards shifts every cut in the film.
 let list = "";
-let last = 0;
 frames.forEach((frame, i) => {
   const file = path.join(FRAMES, `f${String(i).padStart(5, "0")}.jpg`);
   writeFileSync(file, Buffer.from(frame.data, "base64"));
-  const at = frame.ts - stamp;
-  const duration = Math.max(0.008, at - last);
-  last = at;
+  const next = frames[i + 1]?.ts ?? frame.ts + 1 / 10;
+  const duration = Math.max(0.008, next - frame.ts);
   list += `file '${file}'\nduration ${duration.toFixed(4)}\n`;
 });
-const tail = path.join(FRAMES, `f${String(frames.length - 1).padStart(5, "0")}.jpg`);
-writeFileSync(path.join(FRAMES, "list.txt"), `${list}file '${tail}'\n`);
+writeFileSync(path.join(FRAMES, "list.txt"), list);
 
 const ffmpeg = (args) =>
   new Promise((res, rej) => {
@@ -314,4 +333,5 @@ await ffmpeg([
 
 const total = Number(((Date.now() - t0) / 1000).toFixed(1));
 console.log(`wrote ${path.relative(process.cwd(), OUT)} · ${total}s`);
-console.log(JSON.stringify(scenes, null, 1));
+// Scene times are relative to the first captured frame, which is the film's clock.
+console.log(JSON.stringify({ offset: (frames[0].ts - t0 / 1000).toFixed(2), scenes }, null, 1));
