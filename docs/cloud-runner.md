@@ -5,7 +5,7 @@ machine. One service hosts the harness; another hosts generated apps. The browse
 ever receives a per-run capability URL, never the runner token.
 
 ```
-browser ── /api ──> cortex (harness, Basic auth)
+browser ── /api ──> cortex (harness, public site)
    │                   │  POST tar.gz + X-Runner-Token
    │                   ▼
    └── iframe ──> cortex-runner /runs/<id>/<secret>/… ──> generated app (loopback)
@@ -37,7 +37,7 @@ URL directly. `GET /api/health` still describes the harness; the runner has its 
 
 ## Deploy on Render
 
-`render.yaml` defines both services. On a Blueprint sync, Render asks for:
+The harness service is in `render.yaml`; the separate runner is the optional second service described below. On a Blueprint sync with both, Render asks for:
 
 | Service | Secret | Value |
 | --- | --- | --- |

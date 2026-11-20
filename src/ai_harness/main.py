@@ -17,6 +17,8 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
+import time
+from collections import deque
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -29,9 +31,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import paths, preview
+from .auth import AuthError, AuthStore
 from .config.settings import (
     AGENT_LOOP,
     AGENT_STEPS,
+    AUTH_DB,
     BROWSER_CHECK,
     CACHE_ENABLED,
     DIST_DIR,
@@ -64,12 +68,18 @@ app = FastAPI(title="Cortex Harness", version="0.3.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ORIGINS,
+    allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "OPTIONS"],
     allow_headers=["Content-Type", "X-Harness-Token"],
 )
 
 harness = Harness()
 ROSTER = RosterStore(ROSTER_FILE, KEYS_FILE)
+AUTH = AuthStore(AUTH_DB)
+SESSION_COOKIE = "cortex_session"
+SESSION_MAX_AGE = 7 * 24 * 60 * 60
+AUTH_OPEN = {"/api/auth/signup", "/api/auth/login", "/api/auth/me", "/api/auth/logout"}
+_ATTEMPTS: dict[str, deque[float]] = {}
 
 # Browser checks run after the server answers, in the background. Keep a reference so
 # the task is not collected mid-check, and cancel it on shutdown with the services.
@@ -153,34 +163,42 @@ def _origin_allowed(origin: str, host: str) -> bool:
 
 @app.middleware("http")
 async def guard(request: Request, call_next):
-    """The UI, or the token. Nothing else reaches `/api`.
+    """A session cookie, or the service token. Nothing else reaches `/api`.
 
-    A page on another origin always sends `Origin`, and `Sec-Fetch-Site` is a forbidden
-    header a script cannot forge, so the two together tell our UI from some other tab.
-    Non-browser clients (curl, a script) carry neither and must present the token.
+    The marketing page is public; the workshop and every API call behind it are not.
+    A loopback page talking to a loopback API is allowed without a session so local
+    development and the test client keep working; the deployed host always needs a
+    session (or the token for scripts).
     """
     path = request.url.path
     if path == "/api/health" or not path.startswith("/api"):
         return await call_next(request)
-
-    host = request.headers.get("host", "")
-    host_ok = _loopback_host(host) or _public_host(host)
-
-    origin = request.headers.get("origin", "")
-    if origin:
-        if not _origin_allowed(origin, host):
-            return JSONResponse({"detail": "origin not allowed"}, status_code=403)
+    if request.method == "OPTIONS":
         return await call_next(request)
 
-    # `Sec-Fetch-Site` is unforgeable, but a rebound page talking to its own origin also
-    # reports `same-origin`, so the host must be loopback or the configured public host.
-    if host_ok and request.headers.get("sec-fetch-site", "") == "same-origin":
+    host = request.headers.get("host", "")
+    if not (_loopback_host(host) or _public_host(host)):
+        return JSONResponse({"detail": "host not allowed"}, status_code=403)
+    origin = request.headers.get("origin", "")
+    local_browser = _loopback_host(host) and _loopback_host(origin)
+    if origin and not _origin_allowed(origin, host) and not local_browser:
+        return JSONResponse({"detail": "origin not allowed"}, status_code=403)
+    if request.headers.get("sec-fetch-site", "") == "cross-site":
+        return JSONResponse({"detail": "origin not allowed"}, status_code=403)
+
+    session = AUTH.user_for_token(request.cookies.get(SESSION_COOKIE))
+    if session is not None:
+        request.state.user = session
         return await call_next(request)
 
     supplied = request.headers.get("x-harness-token", "")
-    if not supplied or not secrets.compare_digest(supplied, api_token()):
-        return JSONResponse({"detail": "missing or invalid harness token"}, status_code=403)
-    return await call_next(request)
+    if supplied and secrets.compare_digest(supplied, api_token()):
+        return await call_next(request)
+
+    if path in AUTH_OPEN or local_browser:
+        return await call_next(request)
+
+    return JSONResponse({"detail": "Sign in required"}, status_code=401)
 
 
 def _run_dir(run_id: str) -> Path:
@@ -305,6 +323,90 @@ class ChatRequest(BaseModel):
     # Reasoning budget: off answers directly, brief reasons then answers, deep also
     # checks its own direction. Each step is a model call.
     depth: str = "brief"
+
+
+class SignupIn(BaseModel):
+    name: str = ""
+    email: str = ""
+    password: str = ""
+
+
+class LoginIn(BaseModel):
+    email: str = ""
+    password: str = ""
+
+
+def _rate_limit(key: str, limit: int = 8, window: float = 60.0) -> None:
+    """A small in-memory brake on password guessing and signup spam.
+
+    Per-process on purpose: a free Render instance is one process, and a real fleet
+    would move this to the shared store rather than pretend this is distributed.
+    """
+    now = time.monotonic()
+    attempts = _ATTEMPTS.setdefault(key, deque())
+    while attempts and now - attempts[0] > window:
+        attempts.popleft()
+    if len(attempts) >= limit:
+        raise HTTPException(429, "Too many attempts; try again in a minute.", headers={"Retry-After": "60"})
+    attempts.append(now)
+
+
+def _client_host(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+def _session_cookie(response: JSONResponse, token: str, request: Request) -> None:
+    response.set_cookie(
+        SESSION_COOKIE,
+        token,
+        max_age=SESSION_MAX_AGE,
+        httponly=True,
+        samesite="lax",
+        secure=request.url.scheme == "https" or bool(PUBLIC_ORIGIN),
+        path="/",
+    )
+
+
+@app.post("/api/auth/signup")
+async def auth_signup(payload: SignupIn, request: Request) -> JSONResponse:
+    _rate_limit(f"signup:{_client_host(request)}", limit=6)
+    try:
+        token, user = await asyncio.to_thread(AUTH.signup, payload.name, payload.email, payload.password)
+    except AuthError as exc:
+        raise HTTPException(exc.status, str(exc)) from None
+    response = JSONResponse({"user": user})
+    _session_cookie(response, token, request)
+    return response
+
+
+@app.post("/api/auth/login")
+async def auth_login(payload: LoginIn, request: Request) -> JSONResponse:
+    key = f"login:{payload.email.strip().lower()}:{_client_host(request)}"
+    _rate_limit(key)
+    try:
+        token, user = await asyncio.to_thread(AUTH.login, payload.email, payload.password)
+    except AuthError as exc:
+        raise HTTPException(exc.status, str(exc)) from None
+    _ATTEMPTS.pop(key, None)
+    response = JSONResponse({"user": user})
+    _session_cookie(response, token, request)
+    return response
+
+
+@app.get("/api/auth/me")
+async def auth_me(request: Request) -> dict:
+    user = AUTH.user_for_token(request.cookies.get(SESSION_COOKIE))
+    if user is None:
+        raise HTTPException(401, "Sign in required")
+    return {"user": user}
+
+
+@app.post("/api/auth/logout")
+async def auth_logout(request: Request) -> JSONResponse:
+    AUTH.logout(request.cookies.get(SESSION_COOKIE))
+    response = JSONResponse({"ok": True})
+    response.delete_cookie(SESSION_COOKIE, path="/")
+    return response
 
 
 def _stored_key(spec_id: str, kind: str) -> str:

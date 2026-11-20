@@ -54,21 +54,22 @@ async def run(run: RunState, agent: Specialist, units: list[WorkUnit]) -> str:
     await run.emit({"type": "message", "from": agent.id, "text": findings[:900], "kind": "review"})
 
     approved = bool(re.fullmatch(r"\s*APPROVED\s*", findings, flags=re.I))
-    if approved and checks["ok"]:
+    if approved and checks["ok"] and not browser:
         run.verification = checks
         await run.emit({"type": "message", "from": agent.id, "text": "Approved — nothing to fix.", "kind": "review"})
         return findings
-    if approved and not checks["ok"]:
-        # The model saw the deterministic findings and still approved: trust the files.
+    if approved and (not checks["ok"] or browser):
+        # The model approved but a machine-measured fact disagrees (files or the live
+        # browser). Trust the measurement; the later block appends it to the findings.
         await run.emit(
             {
                 "type": "message",
                 "from": "verify",
-                "text": "Reviewer approved, but the deterministic checks disagree — fixing the facts first.",
+                "text": "Reviewer approved, but the harness checks disagree — fixing the facts first.",
                 "kind": "review",
             }
         )
-        findings = verify.as_findings(checks) + "\n\nReviewer said APPROVED; the harness overrules that."
+        findings = (findings.rstrip() + "\n\nReviewer said APPROVED; the harness overrules that.").strip()
 
     # The reviewer writes prose; the verifier writes facts. A rewrite must obey both, so
     # the deterministic issues are quoted verbatim and their files are always targeted —

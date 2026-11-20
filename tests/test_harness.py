@@ -972,7 +972,7 @@ def _api(tmp_path: Path, token: str = "test-token"):
         else:
             os.environ["HARNESS_TOKEN"] = previous
 
-    return TestClient(api.app), runs, restore
+    return TestClient(api.app, base_url="http://127.0.0.1:5178"), runs, restore
 
 
 ALLOWED = {"Origin": "http://127.0.0.1:5178"}
@@ -1008,8 +1008,8 @@ def test_api_refuses_a_foreign_origin_and_requires_the_token(tmp_path: Path) -> 
         assert client.get("/api/runs", headers={"Origin": "http://evil.example"}).status_code == 403
         assert client.get("/api/runs", headers=ALLOWED).status_code == 200
         # a script that presents neither an origin nor the token is refused
-        assert client.get("/api/runs").status_code == 403
-        assert client.get("/api/runs", headers={"X-Harness-Token": "wrong"}).status_code == 403
+        assert client.get("/api/runs").status_code == 401
+        assert client.get("/api/runs", headers={"X-Harness-Token": "wrong"}).status_code == 401
         assert client.get("/api/runs", headers={"X-Harness-Token": "test-token"}).status_code == 200
         # liveness stays readable so a UI can report the harness is down
         assert client.get("/api/health").status_code == 200
@@ -1044,7 +1044,7 @@ def test_dns_rebinding_cannot_use_the_same_origin_shortcut(tmp_path: Path) -> No
         )
 
         local = {"Host": "127.0.0.1:8000"}
-        assert client.get("/api/runs", headers={**local, "Sec-Fetch-Site": "same-origin"}).status_code == 200
+        assert client.get("/api/runs", headers={**local, "Sec-Fetch-Site": "same-origin"}).status_code == 401
         assert client.get("/api/runs", headers={**local, "Origin": "http://127.0.0.1:8000"}).status_code == 200
         # the dev UI is still trusted through the explicit origin list
         assert client.get("/api/runs", headers=ALLOWED).status_code == 200

@@ -24,6 +24,11 @@ services:
         value: "0"
       - key: HARNESS_BROWSER_INTERACT
         value: "0"
+      # App-level accounts: sign-up / sign-in. No HTTP Basic auth.
+      # Accounts and sessions live in HARNESS_AUTH_DB (default workspace/auth.db).
+      # Attach a Render disk and point HARNESS_AUTH_DB at it to survive restarts.
+      # The API still rejects foreign browser origins and non-browser clients
+      # without X-Harness-Token.
       # A free instance has 512 MB. One run at a time keeps it honest.
       - key: HARNESS_MAX_CONCURRENT_RUNS
         value: "1"
@@ -32,10 +37,6 @@ services:
       # River caps concurrency per account+model and answers 429 "account_rate".
       - key: HARNESS_PROVIDER_CONCURRENCY
         value: "1"
-      # Required by the dashboard on first Blueprint sync: "user:password", or just a
-      # password (user "cortex"). Without it the public URL can spend your provider keys.
-      - key: HARNESS_BASIC_AUTH
-        sync: false
       # Generated apps run on the separate `cortex-runner` service below. Set both values
       # to the runner's URL and the same HARNESS_RUNNER_TOKEN.
       # Static/Node runs deploy to Vercel; Python runs fall back to the local runner.
@@ -45,34 +46,9 @@ services:
         sync: false
       - key: HARNESS_VERCEL_TTL
         value: "3600"
-      # Optional alternative: a separately deployed `cortex-runner` service.
+      # Optional alternative: a separately deployed `cortex-runner` service. It is
+      # documented in docs/cloud-runner.md; the hosted default is Vercel above.
       - key: HARNESS_CLOUD_RUNNER_URL
         sync: false
       - key: HARNESS_CLOUD_RUNNER_TOKEN
-        sync: false
-
-  # Per-run execution: one free web service receives a finished workspace, installs it,
-  # serves it on a loopback port and proxies it under a per-run capability URL. It has no
-  # harness API and no provider keys.
-  - type: web
-    name: cortex-runner
-    runtime: python
-    plan: free
-    region: oregon
-    branch: main
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn ai_harness.cloud_runner:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /health
-    autoDeploy: true
-    envVars:
-      - key: PYTHONPATH
-        value: src
-      - key: HARNESS_RUNNER_WORKSPACE
-        value: /var/tmp/cortex-runner
-      - key: HARNESS_RUNNER_TTL
-        value: "900"
-      - key: HARNESS_RUNNER_MAX_RUNS
-        value: "1"
-      # Generate one value and put the same value on the harness service above.
-      - key: HARNESS_RUNNER_TOKEN
         sync: false

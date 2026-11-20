@@ -19,9 +19,11 @@ git push -u origin main
 2. Connect `github.com/varunshah5698/Cortex`
 3. Apply `render.yaml`
 
-Render asks for `HARNESS_BASIC_AUTH` during the first sync. Enter a password, or
-`user:password`. This is not optional in practice: without it, anyone with the URL can
-start runs and spend the provider keys stored on the server. `/api/health` stays open.
+Render asks for no password. The site's first screen is a server-backed sign-up/sign-in
+form. Passwords are PBKDF2-HMAC-SHA256 hashed in `workspace/auth.db`; the session is an
+HttpOnly cookie, and `/api` on the public origin requires it. A script can still use
+`X-Harness-Token`, and a loopback browser stays open for local development. The API
+also rejects foreign browser origins.
 
 ## 3. Add provider keys
 
@@ -35,11 +37,17 @@ A key saved in the workshop lives in a `0600` file on the instance. On a free in
 that file is ephemeral, so environment variables are the durable option. The browser
 never receives a saved key; `GET /api/roster` reports only `has_key`.
 
+Accounts live in `workspace/auth.db`. A free Render instance has an ephemeral disk, so
+accounts and sessions reset on deploy or restart. Set `HARNESS_AUTH_DB` to a path on a
+persistent disk if sign-ups must survive a restart. Keep the provider keys scoped and
+the per-run caps low (`HARNESS_MAX_USD`, `HARNESS_MAX_TOKENS`); the service allows one
+run at a time and two queued.
+
 ## 4. Open the site
 
-Render gives you `https://<service>.onrender.com`. The browser prompts for the Basic
-auth password once. The same origin is added to `HARNESS_ORIGINS` automatically from
-`RENDER_EXTERNAL_URL`, so the UI can call `/api` without a token.
+Render gives you `https://<service>.onrender.com`. Create the first account on that
+screen and you land in the workshop. The same origin is added to `HARNESS_ORIGINS`
+automatically from `RENDER_EXTERNAL_URL`, so the signed-in UI can call `/api`.
 
 ## What is different from a local run
 

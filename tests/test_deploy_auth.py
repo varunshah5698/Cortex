@@ -28,11 +28,11 @@ def test_public_origin_is_same_origin_when_the_host_matches(monkeypatch) -> None
 
 
 def test_public_site_is_not_basic_auth_gated() -> None:
-    client = TestClient(main.app)
+    client = TestClient(main.app, base_url="http://127.0.0.1:5178")
 
     assert client.get("/api/health").status_code == 200
     blocked = client.get("/api/runs")
-    assert blocked.status_code == 403
+    assert blocked.status_code == 401
     assert "www-authenticate" not in blocked.headers
 
     allowed = client.get("/api/runs", headers={"X-Harness-Token": main.api_token()})

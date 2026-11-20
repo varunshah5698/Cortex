@@ -26,8 +26,9 @@ the verified commands above, the conventions and the things they must not do.
 ### Deploy
 
 `render.yaml` deploys the UI and the harness as one Render web service. See
-`docs/deploy.md` for the Blueprint steps, the required `HARNESS_BASIC_AUTH` password and
-the features that stay local (previews, sharing, browser checks).
+`docs/deploy.md` for the Blueprint steps and the features that stay local
+(previews, sharing, browser checks). The site has real sign-up/sign-in; accounts live
+in `HARNESS_AUTH_DB` and need a Render disk to survive restarts.
 
 Open `http://127.0.0.1:5178/#/build`. Configure specialists first in the workshop
 (`#/setup`): each one is a provider, model and role. A key typed there is sent once to
@@ -115,7 +116,7 @@ uses its production URL; `HARNESS_RUNNER_MODE=cloud` sends the finished workspac
 separately deployed `ai_harness.cloud_runner` service instead. The harness never sends
 its `/api`, roster or keys to either. Vercel deployments are removed at
 `HARNESS_VERCEL_TTL`; the cloud runner is TTL-bounded too. See `docs/cloud-runner.md`;
-`render.yaml` defines both Render services.
+`render.yaml` defines the harness service; the optional separate runner is documented in `docs/cloud-runner.md`.
 
 A run is bounded and auditable, not just observable. Every call is priced from a
 model table and charged to the run's ledger; a token or dollar budget stops the run

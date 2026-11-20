@@ -248,7 +248,7 @@ export async function stopRun(id: string): Promise<void> {
 }
 
 export function subscribe(id: string, onEvent: (event: HarnessEvent) => void): EventSource {
-  const source = new EventSource(`${API}/api/run/${id}/events`);
+  const source = new EventSource(`${API}/api/run/${id}/events`, { withCredentials: true });
   let reported = false;
   source.onmessage = (message) => {
     reported = false;

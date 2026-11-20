@@ -301,12 +301,15 @@ export default function Landing() {
               <a href="#faq">Reference</a>
             </div>
             <div>
-              <h4>Account</h4>
+              <h4>Workspace</h4>
               <button className="footer-link" onClick={go("login")}>
                 Sign in
               </button>
               <button className="footer-link" onClick={go("workshop")}>
                 Workshop
+              </button>
+              <button className="footer-link" onClick={go("build")}>
+                Build room
               </button>
             </div>
           </div>

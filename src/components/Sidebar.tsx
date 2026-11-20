@@ -1,6 +1,8 @@
 import type { RefObject } from "react";
 import { Icon } from "./Icon";
 import { seedPrompts, type Thread } from "../lib/threads";
+import { logout, useSession } from "../lib/auth";
+import { navigate } from "../lib/router";
 
 type Props = {
   collapsed: boolean;
@@ -34,6 +36,7 @@ export function Sidebar({
   onOpenThread,
   onUsePrompt,
 }: Props) {
+  const { user, setUser } = useSession();
   const q = query.trim().toLowerCase();
   const matches = (s: string) => !q || s.toLowerCase().includes(q);
 
@@ -117,10 +120,19 @@ export function Sidebar({
       <div className="user-card">
         <img className="avatar" src="/avatar.jpg" alt="" />
         <div className="user-meta">
-          <span className="user-name">Emerson Sterling</span>
-          <span className="user-mail">sterling@gmail.com</span>
+          <span className="user-name">{user?.name ?? "Guest"}</span>
+          <span className="user-mail">{user?.email ?? "Not signed in"}</span>
         </div>
-        <button className="icon-btn logout" title="Sign out">
+        <button
+          className="icon-btn logout"
+          title="Sign out"
+          onClick={() => {
+            void logout().finally(() => {
+              setUser(null);
+              navigate("login");
+            });
+          }}
+        >
           <Icon name="logout" size={17} />
         </button>
       </div>
