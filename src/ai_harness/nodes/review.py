@@ -300,7 +300,7 @@ async def _revise_all(
     # a half-written file behind and the run reports a failure it cannot explain. Collect
     # the exceptions and name the file that failed instead.
     results = await asyncio.gather(*(one(unit) for unit in units), return_exceptions=True)
-    for unit, result in zip(units, results, strict=False):
+    for unit, result in zip(units, results):  # noqa: B905 - the project venv is Python 3.9
         if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
             await run.emit(
                 {
