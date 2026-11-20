@@ -409,7 +409,8 @@ def test_a_declared_file_without_a_unit_gets_a_file_specific_job(tmp_path: Path)
     briefs = {unit.file: unit.objective for unit in units}
 
     assert briefs["src/main.tsx"].startswith("Mount the root App")
-    assert briefs["src/App.tsx"].startswith("Compose the section")
+    assert briefs["src/App.tsx"].startswith("Compose the page using only")
+    assert "Hero" in briefs["src/App.tsx"]
     assert "classes" in briefs["src/styles.css"]
     assert "Hero" in briefs["src/components/Hero.tsx"]
 
