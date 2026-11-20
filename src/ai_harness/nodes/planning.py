@@ -154,10 +154,12 @@ async def run(run: RunState, planner: Specialist) -> tuple[list[WorkUnit], list[
     learned = memory.lessons()
     if learned:
         remembered = f"{remembered}\n\nDurable lessons:\n{learned}".strip()
+    plan_call = planner_agent.plan(planner, run.prompt, remembered)
     try:
-        objective, units, files, questions, usage = await asyncio.wait_for(
-            planner_agent.plan(planner, run.prompt, remembered), PLAN_SECONDS
-        )
+        if PLAN_SECONDS > 0:
+            objective, units, files, questions, usage = await asyncio.wait_for(plan_call, PLAN_SECONDS)
+        else:
+            objective, units, files, questions, usage = await plan_call
     except asyncio.TimeoutError:
         # The local model can spend minutes on a plan it never returns. The inferred
         # stack is a working scaffold; the team can still write against it now.
@@ -204,13 +206,13 @@ async def run(run: RunState, planner: Specialist) -> tuple[list[WorkUnit], list[
             await run.emit(run.track_usage(critic, "plan-critic", critic_usage))
             await run.emit({"type": "message", "from": critic.id, "text": review[:700], "kind": "review"})
             if "REVISE" in review.upper():
-                revised, revised_usage = await planner_agent.plan(
+                revised = await planner_agent.plan(
                     planner,
                     run.prompt,
                     f"{remembered}\n\nPlan review findings:\n{review[:2000]}",
                 )
+                objective, units, files, questions, revised_usage = revised
                 await run.emit(run.track_usage(planner, "plan-revision", revised_usage))
-                objective, units, files, questions, _ = revised
         except llm.ProviderError as exc:
             await run.emit({"type": "error", "message": str(exc), "agent": critic.id})
 
