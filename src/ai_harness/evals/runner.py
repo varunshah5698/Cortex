@@ -30,6 +30,7 @@ from ..modules import failures, llm, memory, prompts
 from ..modules.roster import RosterStore
 from ..nodes import verify
 from ..tools import web_search
+from ..utils import logger
 from . import build as build_tier
 from . import judge as judge_tier
 from .cases import CASES, Case
@@ -257,20 +258,25 @@ async def run_suite(
 
     original_root = state_mod.RUNS_ROOT
     original_pages = (failures.LOG, failures.REGRESSIONS, memory.PATH)
+    original_logs = logger.LOGS_ROOT
     sandbox = Path(ROOT) / "evals" / ".runs"
     sandbox.mkdir(parents=True, exist_ok=True)
     state_mod.RUNS_ROOT = sandbox
     # An eval suite deliberately runs cases that must fail, so it would otherwise append a
     # row to the project's failures.md and a case to its regressions on every run. Its
-    # bookkeeping belongs in its own sandbox.
+    # bookkeeping belongs in its own sandbox — including the event log, which is what the
+    # build room reads: seven cases that are supposed to fail are not seven product
+    # failures.
     failures.LOG = sandbox / "failures.md"
     failures.REGRESSIONS = sandbox / "regressions.jsonl"
     memory.PATH = sandbox / "memory.md"
+    logger.LOGS_ROOT = sandbox / "logs"
     try:
         results = [await run_case(case, live=live, build=build, judge=judge, team=team) for case in cases]
     finally:
         state_mod.RUNS_ROOT = original_root
         failures.LOG, failures.REGRESSIONS, memory.PATH = original_pages
+        logger.LOGS_ROOT = original_logs
     return results + replays
 
 

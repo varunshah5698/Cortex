@@ -22,9 +22,32 @@ async function call(path: string, init: RequestInit = {}): Promise<User> {
   return data.user;
 }
 
+/**
+ * True when this page and the harness are both on the operator's own machine.
+ *
+ * The API middleware already lets a loopback browser through without a session
+ * (`local_browser`), so a 401 from `/api/auth/me` here does not mean "signed out" —
+ * it means "no account needed". Reading it as signed-out bounced the Build Room to
+ * the login form while every API call behind it kept working.
+ */
+function onLoopback(): boolean {
+  const local = (host: string) => ["127.0.0.1", "localhost", "[::1]", "::1"].includes(host);
+  try {
+    return local(window.location.hostname) && (!API || local(new URL(API).hostname));
+  } catch {
+    return false;
+  }
+}
+
+const LOCAL_OPERATOR: User = {
+  id: "local-operator",
+  name: "Local operator",
+  email: "local@127.0.0.1",
+};
+
 export async function me(): Promise<User | null> {
   const response = await fetch(`${API}/api/auth/me`, { credentials: "include" });
-  if (response.status === 401) return null;
+  if (response.status === 401) return onLoopback() ? LOCAL_OPERATOR : null;
   if (!response.ok) throw new Error("The harness is not answering.");
   const data = (await response.json()) as { user?: User };
   return data.user ?? null;

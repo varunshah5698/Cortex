@@ -39,3 +39,8 @@ node_modules
 
 # Vercel CLI installed locally for the cloud runner build
 .vercel-cli/
+
+# Local scratch: one-off patch scripts and probe files, never source.
+.scratch/
+.perch-probe.txt
+.bld-polish-*.css
