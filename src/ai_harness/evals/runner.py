@@ -141,6 +141,7 @@ async def run_case(
         scripted = Scripted(case)
         original_call, original_stream = llm.call, llm.stream
         original_research, original_reachable = web_search.research, llm.reachable
+        original_tools = llm.call_tools
 
         async def no_research(_queries, log=None):  # noqa: ANN001 - matches web_search.research
             return [], []
@@ -148,12 +149,25 @@ async def run_case(
         async def reachable(_spec):  # noqa: ANN001 - the scripted provider has no endpoint
             return True, ""
 
-        llm.call, llm.stream, llm.reachable = scripted.call, scripted.stream, reachable
+        async def no_native(*_args, **_kwargs):  # noqa: ANN002, ANN003 - offline suite
+            raise llm.NativeToolsUnsupported("the scripted suite uses the text protocol")
+
+        llm.call, llm.stream, llm.reachable, llm.call_tools = (
+            scripted.call,
+            scripted.stream,
+            reachable,
+            no_native,
+        )
         web_search.research = no_research
         try:
             await Orchestrator(run).run_all()
         finally:
-            llm.call, llm.stream, llm.reachable = original_call, original_stream, original_reachable
+            llm.call, llm.stream, llm.reachable, llm.call_tools = (
+                original_call,
+                original_stream,
+                original_reachable,
+                original_tools,
+            )
             web_search.research = original_research
         calls = scripted.calls
 

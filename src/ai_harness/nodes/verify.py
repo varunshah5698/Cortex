@@ -219,6 +219,54 @@ def _check_rust(path: str, content: str, files: dict[str, dict], issues: list[di
             )
 
 
+def _check_manifest(path: str, data: dict, files: dict[str, dict], issues: list[dict]) -> None:
+    """The manifest and the tree must describe the same build."""
+    if not isinstance(data, dict):
+        return
+    scripts = data.get("scripts") or {}
+    deps = {**data.get("dependencies", {}), **data.get("devDependencies", {})}
+    runs = " ".join(str(value).lower() for value in scripts.values())
+    names = set(files)
+    nextish = "next" in deps or "next " in runs or 'next"' in runs
+    viteish = "vite" in deps or "vite" in runs
+    has_vite_tree = any(name in names for name in ("src/main.tsx", "src/main.jsx", "index.html"))
+    has_next_tree = any(name == "next.config.js" or name.startswith(("app/", "pages/")) for name in names)
+
+    if nextish and has_vite_tree and not has_next_tree:
+        _issue(
+            issues,
+            "error",
+            "manifest_mismatch",
+            path,
+            "declares Next.js but the tree is a Vite entry (src/main.tsx/index.html); "
+            "use Vite scripts or plan the Next app/ or pages/ tree",
+        )
+    if viteish and "index.html" not in names:
+        _issue(
+            issues,
+            "error",
+            "missing_entry",
+            path,
+            "runs Vite but the tree has no index.html for Vite to serve",
+        )
+    if "src/main.tsx" in names and "index.html" not in names and not nextish:
+        _issue(
+            issues,
+            "error",
+            "missing_entry",
+            "src/main.tsx",
+            "a Vite/React entry mounts #root, so the tree needs index.html",
+        )
+    if "src/main.ts" in names and "index.html" not in names and not nextish:
+        _issue(
+            issues,
+            "error",
+            "missing_entry",
+            "src/main.ts",
+            "a Vite entry mounts an app, so the tree needs index.html",
+        )
+
+
 def check(files: dict[str, dict], declared: list[str] | None = None) -> dict:
     """Read the written tree and report contradictions. No model, no network."""
     declared = list(declared or files.keys())
@@ -316,7 +364,7 @@ def check(files: dict[str, dict], declared: list[str] | None = None) -> dict:
             continue
         if path.endswith(".json"):
             try:
-                json.loads(_strip_jsonc(content))
+                data = json.loads(_strip_jsonc(content))
             except json.JSONDecodeError as exc:
                 _issue(
                     issues,
@@ -325,6 +373,9 @@ def check(files: dict[str, dict], declared: list[str] | None = None) -> dict:
                     path,
                     f"does not parse as JSON ({exc.msg} at line {exc.lineno})",
                 )
+            else:
+                if path.rsplit("/", 1)[-1] == "package.json":
+                    _check_manifest(path, data, files, issues)
         if path.endswith(MODULE_SUFFIXES + (".py",)):
             _check_imports(path, content, files, issues)
         if path.endswith(".rs"):

@@ -22,7 +22,7 @@ import httpx
 from ..config.settings import HTTP_TIMEOUT_READ, JSON_MODE, MAX_OUTPUT_TOKENS, PROVIDER_RATE_LIMIT
 from ..models import Specialist
 from ..utils.netguard import UnsafeEndpoint, ensure_allowed
-from .usage import StreamStats
+from .usage import StreamStats, Usage
 
 TIMEOUT = httpx.Timeout(connect=20.0, read=HTTP_TIMEOUT_READ, write=60.0, pool=20.0)
 
@@ -497,3 +497,76 @@ async def stream(
         # A read timeout mid-stream used to reach the run as a bare `ReadTimeout:` with
         # no agent and no endpoint; name both so the UI says what actually failed.
         raise ProviderError(f"{spec.name}: {type(exc).__name__} from {base}") from exc
+
+
+async def openai_tool_call(
+    spec: Specialist,
+    messages: list[dict[str, str]],
+    tools: list[dict],
+    temperature: float,
+) -> tuple[dict | None, str, Usage]:
+    """One non-streaming native tool call on an OpenAI-compatible endpoint.
+
+    Native tools are an optimisation, not a requirement: the loop still speaks the text
+    protocol. A provider that rejects the `tools` field raises a 4xx and the caller
+    falls back for the rest of the loop.
+    """
+    base = _base(spec)
+    if not base or not spec.model:
+        raise ProviderError(f"{spec.name} has no base URL or model")
+    try:
+        await ensure_allowed(base)
+    except UnsafeEndpoint as exc:
+        raise ProviderError(f"{spec.name}: refusing {base} — {exc}") from exc
+    await _throttle(spec)
+    body: dict = {
+        "model": spec.model,
+        "messages": _messages(messages),
+        "tools": tools,
+        "tool_choice": "auto",
+        "temperature": temperature,
+        "stream": False,
+    }
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    if spec.apiKey:
+        headers["Authorization"] = f"Bearer {spec.apiKey}"
+        headers["x-api-key"] = spec.apiKey
+
+    lock = _local_lock(spec)
+    try:
+        if lock is None:
+            response = await client().post(f"{base}/chat/completions", headers=headers, json=body)
+        else:
+            async with lock:
+                response = await client().post(f"{base}/chat/completions", headers=headers, json=body)
+    except httpx.HTTPError as exc:
+        raise ProviderError(f"{spec.name}: {type(exc).__name__} from {base}") from exc
+    if response.status_code >= 400:
+        await _raise_for(response, spec)
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise ProviderError(f"{spec.name}: the tool-call response was not JSON") from exc
+
+    usage = payload.get("usage") or {}
+    stats = Usage(
+        prompt_tokens=int(usage.get("prompt_tokens") or 0),
+        completion_tokens=int(usage.get("completion_tokens") or 0),
+        calls=1,
+    )
+    choice = (payload.get("choices") or [{}])[0] or {}
+    message = choice.get("message") or {}
+    content = str(message.get("content") or "").strip()
+    calls = message.get("tool_calls") or []
+    if not calls:
+        return None, content, stats
+    function = (calls[0] or {}).get("function") or {}
+    name = str(function.get("name") or "").strip()
+    raw_args = function.get("arguments") or "{}"
+    try:
+        args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+    except json.JSONDecodeError:
+        args = {"_raw": raw_args}
+    if not isinstance(args, dict):
+        args = {}
+    return {"tool": name, "args": args, "thought": content}, content, stats

@@ -126,6 +126,10 @@ AGENT_STEPS = max(1, _int("HARNESS_AGENT_STEPS", 8))
 AGENT_CONTEXT_CHARS = max(4000, _int("HARNESS_AGENT_CONTEXT_CHARS", 12000))
 AGENT_OBSERVATION_CHARS = max(500, _int("HARNESS_AGENT_OBSERVATION_CHARS", 4000))
 AGENT_ACTIVE_FILES = max(1, _int("HARNESS_AGENT_ACTIVE_FILES", 2))
+# OpenAI-compatible providers can be driven by native tool calls instead of the text
+# protocol. The loop keeps the text parser as the fallback and disables this for the
+# rest of the run when a provider answers 4xx to `tools`.
+NATIVE_TOOLS = _bool("HARNESS_NATIVE_TOOLS", True)
 
 # Memory hygiene: the event log is streamed to disk and only a window stays resident.
 EVENT_MEMORY_LIMIT = max(200, _int("HARNESS_EVENT_MEMORY", 4000))
@@ -167,6 +171,17 @@ ORIGINS = [
     origin.strip().rstrip("/") for origin in os.getenv("HARNESS_ORIGINS", DEFAULT_ORIGINS).split(",") if origin.strip()
 ]
 
+# The public URL of a deployed instance. Render sets RENDER_EXTERNAL_URL; other hosts
+# can set HARNESS_PUBLIC_ORIGIN. Same-origin requests from this host are the UI, not a
+# foreign page, so the API guard treats it like loopback. Empty on a local checkout.
+PUBLIC_ORIGIN = (os.getenv("HARNESS_PUBLIC_ORIGIN") or os.getenv("RENDER_EXTERNAL_URL") or "").strip().rstrip("/")
+if PUBLIC_ORIGIN and PUBLIC_ORIGIN not in ORIGINS:
+    ORIGINS.append(PUBLIC_ORIGIN)
+
+# Optional HTTP Basic auth for a public deployment: "user:password", or a bare password
+# (username "cortex"). Unset means open, which is only safe on loopback.
+BASIC_AUTH = os.getenv("HARNESS_BASIC_AUTH", "").strip()
+
 # Local providers (Ollama, a local vLLM) are a supported feature, so loopback and
 # RFC1918 hosts are allowed by default. Set HARNESS_ALLOW_LOCAL_PROVIDERS=0 on a shared
 # machine. Link-local/metadata addresses are blocked either way (utils/netguard.py).
@@ -183,6 +198,24 @@ HTTP_RATE_LIMIT = _int("HARNESS_HTTP_RATE_LIMIT", 240)
 # because it serves nothing but the run's own files.
 PREVIEW_HOST = os.getenv("HARNESS_PREVIEW_HOST", "127.0.0.1").strip() or "127.0.0.1"
 PREVIEW_PORT = _int("HARNESS_PREVIEW_PORT", 8001)
+
+# Tier 4: a real browser. The HTTP probe cannot see a button that does nothing or a
+# console exception that blanks the page. Chrome is driven over CDP by
+# scripts/browser_check.mjs, so this needs no npm dependency; set HARNESS_BROWSER_CHECK=0
+# on a machine without Chrome. Interaction clicks up to two visible buttons, which is
+# the check that catches "it renders and nothing works".
+BROWSER_CHECK = _bool("HARNESS_BROWSER_CHECK", True)
+BROWSER_INTERACT = _bool("HARNESS_BROWSER_INTERACT", True)
+BROWSER_TIMEOUT = _float("HARNESS_BROWSER_TIMEOUT", 30.0)
+CHROME_PATH = os.getenv("HARNESS_CHROME", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome").strip()
+NODE_BIN = os.getenv("HARNESS_NODE", "node").strip() or "node"
+
+# A public share is a per-run tunnel, not a second /api. The tunnel command is opt-in
+# (the API requires approval), TTL-bounded, and only ever points at the one-run share
+# server. `{url}` is replaced with that server's loopback URL.
+TUNNEL_COMMAND = os.getenv("HARNESS_TUNNEL_COMMAND", "").strip()
+TUNNEL_TIMEOUT = _float("HARNESS_TUNNEL_TIMEOUT", 30.0)
+SHARE_TTL = _float("HARNESS_SHARE_TTL", 900.0)
 
 TOKEN_FILE = Path(os.getenv("HARNESS_TOKEN_FILE", WORKSPACE_ROOT / ".harness-token"))
 ROSTER_FILE = Path(os.getenv("HARNESS_ROSTER_FILE", WORKSPACE_ROOT / ".harness-roster.json"))

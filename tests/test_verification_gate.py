@@ -98,3 +98,38 @@ def test_a_leaked_file_marker_is_a_verification_error() -> None:
     )
     assert report["ok"] is False
     assert any(issue["code"] == "stray_marker" for issue in report["issues"])
+
+
+def test_a_next_manifest_on_a_vite_tree_is_a_mismatch() -> None:
+    from ai_harness.nodes import verify
+
+    files = {
+        "package.json": {
+            "content": json.dumps(
+                {"scripts": {"dev": "next dev", "build": "next build"}, "dependencies": {"next": "^14.1.0"}}
+            )
+        },
+        "index.html": {"content": '<div id="root"></div><script type="module" src="/src/main.tsx"></script>'},
+        "src/main.tsx": {"content": "import App from './App';"},
+        "src/App.tsx": {"content": "export default function App() { return <p>hi</p>; }"},
+    }
+    report = verify.check(files, list(files))
+    assert report["ok"] is False
+    assert any(issue["code"] == "manifest_mismatch" for issue in report["issues"])
+
+
+def test_a_vite_manifest_with_an_entry_shell_passes() -> None:
+    from ai_harness.nodes import verify
+
+    files = {
+        "package.json": {
+            "content": json.dumps(
+                {"scripts": {"dev": "vite", "build": "vite build"}, "devDependencies": {"vite": "^5.4.0"}}
+            )
+        },
+        "index.html": {"content": '<div id="root"></div><script type="module" src="/src/main.tsx"></script>'},
+        "src/main.tsx": {"content": "import App from './App';"},
+        "src/App.tsx": {"content": "export default function App() { return <p>hi</p>; }"},
+    }
+    report = verify.check(files, list(files))
+    assert not any(issue["code"] in ("manifest_mismatch", "missing_entry") for issue in report["issues"])

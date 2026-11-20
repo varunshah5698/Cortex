@@ -16,7 +16,7 @@ that makes it runnable. Any language or framework is allowed — not only the we
 
 Reply with ONLY this JSON, no prose, no fences:
 {"objective":"one sentence","stack":"react+typescript",
- "files":["package.json","src/main.tsx","src/App.tsx","src/index.css"],
+ "files":["package.json","index.html","src/main.tsx","src/App.tsx"],
  "work_units":[{"title":"short name","role":"frontend|backend|general","file":"src/App.tsx",
                 "objective":"what exactly this file must contain"}],
  "research_questions":["a question worth searching the web for","..."]}
@@ -24,6 +24,11 @@ Reply with ONLY this JSON, no prose, no fences:
 Rules:
 - 2 to 4 files, real paths with the correct extensions. Nested folders are fine.
 - Include a manifest when the stack needs one (package.json, requirements.txt, pyproject.toml, go.mod).
+- A Vite/React, Vue or Svelte tree needs `index.html` at the root and its entry file must load
+  the source entry (`/src/main.tsx`, `/src/main.ts`). Do not name Next.js (`next dev`) unless
+  you also plan its `app/` or `pages/` tree — a Vite entry with a Next manifest cannot build.
+- The manifest must agree with the tree: its scripts and dependencies are for the stack you
+  actually listed, and its entry file must exist in the plan.
 - The files must fit together: the entry file imports the others by those exact paths.
 - Roles: markup, styling and UI are frontend; logic, data, entry wiring and manifests are backend.
 - A React request gets .tsx/.jsx, a Python request gets .py, a CLI gets .ts or .go — match the request.
@@ -145,6 +150,9 @@ The harness checks are facts, not opinions. These still fail:
 Call exactly one tool per turn. Reply with exactly ONE JSON object and nothing else —
 no prose, no markdown fences, no second object:
 {{"thought": "one sentence", "tool": "read", "args": {{"path": "{file}"}}}}
+
+If the API offers these as native tools, call the tool directly instead of writing the
+JSON object. Both are the same action.
 
 Tools:
 - list {{}} — every file in the run workspace, with line counts.

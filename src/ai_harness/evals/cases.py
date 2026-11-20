@@ -109,9 +109,15 @@ REACT_MANIFEST = """{
 }
 """
 
+REACT_INDEX = """<!doctype html>
+<html lang="en">
+  <head><meta charset="UTF-8" /><title>Counter</title></head>
+  <body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body>
+</html>
+"""
+
 REACT_MAIN = """import { createRoot } from "react-dom/client";
 import App from "./App";
-import "./index.css";
 
 const root = document.getElementById("root");
 if (root) {
@@ -126,12 +132,6 @@ REACT_APP = """export default function App() {
       <p>0</p>
     </main>
   );
-}
-"""
-
-REACT_CSS = """.card {
-  font-family: system-ui, sans-serif;
-  padding: 2rem;
 }
 """
 
@@ -204,16 +204,16 @@ CASES: list[Case] = [
             "A minimal React app",
             [
                 ("Manifest", "backend", "package.json", "name, scripts and react dependencies"),
+                ("Shell", "frontend", "index.html", "the document that mounts #root"),
                 ("Entry", "frontend", "src/main.tsx", "mount App into #root"),
                 ("UI", "frontend", "src/App.tsx", "the component tree"),
-                ("Styles", "frontend", "src/index.css", "card styling"),
             ],
         ),
         code={
             "package.json": REACT_MANIFEST,
+            "index.html": REACT_INDEX,
             "src/main.tsx": REACT_MAIN,
             "src/App.tsx": REACT_APP,
-            "src/index.css": REACT_CSS,
         },
         expect_ok=True,
         note="a stack-aware scaffold whose imports resolve",

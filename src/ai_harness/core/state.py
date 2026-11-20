@@ -55,6 +55,9 @@ class RunState:
     # on a run that was only verified, and `build` is None until something really built.
     previewed: bool = False
     build: dict | None = None
+    # Tier 4, recorded after serving: what a real browser saw. It never changes `done`;
+    # a page can be structurally verified and still fail here.
+    browser: dict | None = None
     cache_hits: int = 0
     # False when rebuilding from disk: an existing workspace must never be wiped.
     fresh: bool = True
@@ -162,6 +165,7 @@ class RunState:
             "verification": self.verification,
             "build": self.build,
             "previewed": self.previewed,
+            "browser": self.browser,
             "prompts": prompts.fingerprints(),
         }
 
@@ -226,6 +230,7 @@ def restore_run(run_id: str) -> RunState | None:
     ledger = read_metrics(run_id) or {}
     run.previewed = bool(ledger.get("previewed", False))
     run.build = ledger.get("build") if isinstance(ledger.get("build"), dict) else None
+    run.browser = ledger.get("browser") if isinstance(ledger.get("browser"), dict) else None
 
     if not run.done:
         run.events.append(

@@ -15,6 +15,7 @@ Two rules this module enforces rather than documents:
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import secrets
 from pathlib import Path
@@ -24,7 +25,7 @@ from urllib.parse import urlparse
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -32,12 +33,16 @@ from . import paths, preview
 from .config.settings import (
     AGENT_LOOP,
     AGENT_STEPS,
+    BASIC_AUTH,
+    BROWSER_CHECK,
     CACHE_ENABLED,
     DIST_DIR,
     KEYS_FILE,
     MAX_RUN_TOKENS,
     MAX_RUN_USD,
+    NATIVE_TOOLS,
     ORIGINS,
+    PUBLIC_ORIGIN,
     RETRY_ATTEMPTS,
     ROSTER_FILE,
     api_token,
@@ -46,7 +51,7 @@ from .config.settings import (
 from .core.harness import Harness, HarnessBusy
 from .core.state import RunState, now_iso
 from .models import Specialist
-from .modules import budget, llm, permissions, probe, receipt, runner
+from .modules import browser, budget, cloud, llm, permissions, probe, receipt, runner
 from .modules.cache import CACHE
 from .modules.roster import RosterStore
 from .utils.validators import UnsafePath
@@ -64,6 +69,10 @@ app.add_middleware(
 
 harness = Harness()
 ROSTER = RosterStore(ROSTER_FILE, KEYS_FILE)
+
+# Browser checks run after the server answers, in the background. Keep a reference so
+# the task is not collected mid-check, and cancel it on shutdown with the services.
+_browser_tasks: set[asyncio.Task] = set()
 
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 
@@ -98,17 +107,30 @@ def _loopback_host(value: str) -> bool:
     return bool(parts and parts[0] in LOOPBACK)
 
 
+_public_parts = _host_port(PUBLIC_ORIGIN)
+PUBLIC_HOST = _public_parts[0] if _public_parts else ""
+
+
+def _public_host(value: str) -> bool:
+    """True when the Host header names the one public origin this instance owns."""
+    parts = _host_port(value)
+    return bool(parts and PUBLIC_HOST and parts[0] == PUBLIC_HOST)
+
+
 def _origin_allowed(origin: str, host: str) -> bool:
     clean = (origin or "").strip().rstrip("/")
     if not clean:
         return False
     if clean in ORIGINS:
         return True
-    # Same-origin only when both sides are loopback and agree on host *and* port;
-    # equal netlocs alone would accept a rebound name that resolves to 127.0.0.1.
     origin_parts, host_parts = _host_port(clean), _host_port(host)
     if not origin_parts or not host_parts:
         return False
+    # The deployed origin owns this instance; it is not a name resolving at loopback.
+    if _public_host(host) and origin_parts[0] == PUBLIC_HOST:
+        return True
+    # Same-origin only when both sides are loopback and agree on host *and* port;
+    # equal netlocs alone would accept a rebound name that resolves to 127.0.0.1.
     if origin_parts[0] not in LOOPBACK or host_parts[0] not in LOOPBACK:
         return False
     return origin_parts == host_parts
@@ -127,7 +149,7 @@ async def guard(request: Request, call_next):
         return await call_next(request)
 
     host = request.headers.get("host", "")
-    host_ok = _loopback_host(host)
+    host_ok = _loopback_host(host) or _public_host(host)
 
     origin = request.headers.get("origin", "")
     if origin:
@@ -136,7 +158,7 @@ async def guard(request: Request, call_next):
         return await call_next(request)
 
     # `Sec-Fetch-Site` is unforgeable, but a rebound page talking to its own origin also
-    # reports `same-origin`, so the host must be loopback too.
+    # reports `same-origin`, so the host must be loopback or the configured public host.
     if host_ok and request.headers.get("sec-fetch-site", "") == "same-origin":
         return await call_next(request)
 
@@ -144,6 +166,34 @@ async def guard(request: Request, call_next):
     if not supplied or not secrets.compare_digest(supplied, api_token()):
         return JSONResponse({"detail": "missing or invalid harness token"}, status_code=403)
     return await call_next(request)
+
+
+@app.middleware("http")
+async def basic_auth(request: Request, call_next):
+    """One password in front of everything when this instance is public.
+
+    Local use leaves `HARNESS_BASIC_AUTH` unset. A Render deployment sets it, because
+    otherwise any visitor could drive the harness and spend the owner's provider keys.
+    `/api/health` stays open for Render's health check; it exposes limits, not secrets.
+    """
+    if not BASIC_AUTH or request.url.path == "/api/health" or request.method == "OPTIONS":
+        return await call_next(request)
+
+    expected = BASIC_AUTH if ":" in BASIC_AUTH else f"cortex:{BASIC_AUTH}"
+    header = request.headers.get("authorization", "")
+    supplied = ""
+    if header.lower().startswith("basic "):
+        try:
+            supplied = base64.b64decode(header[6:], validate=True).decode("utf-8")
+        except ValueError:
+            supplied = ""
+    if supplied and secrets.compare_digest(supplied, expected):
+        return await call_next(request)
+    return Response(
+        status_code=401,
+        headers={"WWW-Authenticate": 'Basic realm="Cortex", charset="UTF-8"'},
+        content="Cortex is password protected.",
+    )
 
 
 def _run_dir(run_id: str) -> Path:
@@ -181,7 +231,7 @@ def _record_build(run: RunState, service: runner.Service) -> None:
     run.save_metrics()
 
 
-def _service_payload(service: runner.Service | None, run_id: str = "") -> dict:
+def _service_payload(service: runner.Service | None, run_id: str = "", browser_report: dict | None = None) -> dict:
     if service is None:
         return {
             "run_id": run_id,
@@ -194,8 +244,9 @@ def _service_payload(service: runner.Service | None, run_id: str = "") -> dict:
             "pending": [],
             "detail_lines": [],
             "logs": [],
+            "browser": browser_report,
         }
-    return service.as_dict()
+    return {**service.as_dict(), "browser": browser_report}
 
 
 class SpecialistIn(BaseModel):
@@ -311,7 +362,7 @@ async def health() -> dict:
             "max_tokens": MAX_RUN_TOKENS,
             "max_usd": MAX_RUN_USD,
             "retry_attempts": RETRY_ATTEMPTS,
-            "agent_loop": {"enabled": AGENT_LOOP, "steps": AGENT_STEPS},
+            "agent_loop": {"enabled": AGENT_LOOP, "steps": AGENT_STEPS, "native_tools": NATIVE_TOOLS},
         },
         # What the dollar cap is actually computed from: a roster model with no row would
         # make `max_usd` a guess, so it is named here rather than discovered on an invoice.
@@ -554,6 +605,52 @@ async def run_metrics(run_id: str) -> dict:
     raise HTTPException(404, "unknown run")
 
 
+async def _browser_record(run_id: str, run: RunState, service: runner.Service | None = None) -> dict | None:
+    """Open the ready service in Chrome, record the verdict, and stream it as `verify`."""
+    service = service or runner.get(run_id)
+    if service is None or service.state != "ready" or not service.url:
+        return None
+    report = await browser.check(service.url, interact=True)
+    run.browser = report
+    await run.emit({"type": "verify", **report})
+    run.save_metrics()
+    return report
+
+
+async def _browser_after_ready(run_id: str) -> None:
+    """Follow a starting service and check it once it answers. Never blocks the API."""
+    try:
+        for _ in range(240):
+            service = runner.get(run_id)
+            if service is None:
+                return
+            if service.state == "ready":
+                run = harness.get(run_id)
+                if run is not None:
+                    await _browser_record(run_id, run, service)
+                return
+            if service.state in ("failed", "stopped", "needs_approval"):
+                return
+            await asyncio.sleep(1)
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 - a browser check must never take the harness down
+        return
+
+
+@app.post("/api/run/{run_id}/browser-check")
+async def browser_check(run_id: str) -> dict:
+    """Tier 4 on demand: a real browser, console errors, failed requests, one click."""
+    run = harness.get(run_id)
+    if run is None:
+        raise HTTPException(404, "unknown run")
+    service = runner.get(run_id)
+    if service is None or service.state != "ready":
+        raise HTTPException(409, "the run is not serving; run the preview first")
+    report = await _browser_record(run_id, run, service)
+    return report or {"ok": False, "stage": "browser", "issues": [], "note": "the run is not ready"}
+
+
 @app.post("/api/run/{run_id}/serve")
 async def serve_start(run_id: str, restart: bool = False, approve: bool = False) -> dict:
     """Install, build and serve what the run wrote. Returns at once; poll for state.
@@ -584,7 +681,11 @@ async def serve_start(run_id: str, restart: bool = False, approve: bool = False)
     )
     if run is not None:
         _record_build(run, service)
-    return _service_payload(service, run_id)
+        if BROWSER_CHECK and service.state in runner.LIVE:
+            task = asyncio.create_task(_browser_after_ready(run_id))
+            _browser_tasks.add(task)
+            task.add_done_callback(_browser_tasks.discard)
+    return _service_payload(service, run_id, run.browser if run is not None else None)
 
 
 @app.get("/api/run/{run_id}/serve")
@@ -595,12 +696,40 @@ async def serve_status(run_id: str) -> dict:
     # building settle later, so the ledger follows them instead of freezing on "detecting".
     if service is not None and run is not None and service.state != (run.build or {}).get("state"):
         _record_build(run, service)
-    return _service_payload(service, run_id)
+    return _service_payload(service, run_id, run.browser if run is not None else None)
 
 
 @app.post("/api/run/{run_id}/serve/stop")
 async def serve_stop(run_id: str) -> dict:
-    return _service_payload(await runner.stop(run_id), run_id)
+    run = harness.get(run_id)
+    # The public URL goes first: stopping the local service while a tunnel is still up
+    # would leave a public link pointing at a dead port.
+    if cloud.get(run_id) is not None:
+        await cloud.stop(run_id, reason="the preview stopped")
+    return _service_payload(await runner.stop(run_id), run_id, run.browser if run is not None else None)
+
+
+@app.post("/api/run/{run_id}/share")
+async def share_start(run_id: str, approve: bool = False) -> dict:
+    """Publish one ready run through a one-run origin. Approval is not a formality."""
+    try:
+        shared = await cloud.start(run_id, approved=approve)
+    except cloud.TunnelUnavailable as exc:
+        raise HTTPException(503, str(exc)) from None
+    except cloud.ShareError as exc:
+        raise HTTPException(409, str(exc)) from None
+    return shared.as_dict()
+
+
+@app.get("/api/run/{run_id}/share")
+async def share_status(run_id: str) -> dict:
+    shared = cloud.get(run_id)
+    return shared.as_dict() if shared is not None else {"run_id": run_id, "state": "idle", "url": None}
+
+
+@app.post("/api/run/{run_id}/share/stop")
+async def share_stop(run_id: str) -> dict:
+    return (await cloud.stop(run_id, reason="stopped by the operator")).as_dict()
 
 
 @app.on_event("startup")
@@ -612,6 +741,11 @@ async def startup() -> None:
 @app.on_event("shutdown")
 async def shutdown() -> None:
     """Never leave a served run, an artifact origin or a connection pool behind."""
+    for task in list(_browser_tasks):
+        task.cancel()
+    await asyncio.gather(*_browser_tasks, return_exceptions=True)
+    _browser_tasks.clear()
+    await cloud.stop_all()
     await runner.stop_all()
     await preview.stop_background()
     await llm.aclose_client()

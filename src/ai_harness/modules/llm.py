@@ -21,7 +21,8 @@ from ..models import Specialist
 from ..utils.logger import event_log
 from . import budget as pricing
 from . import runtime
-from .adapters import ProviderError, aclose, reachable, warm
+from .adapters import ProviderError, aclose, protocol, reachable, warm
+from .adapters import openai_tool_call as _adapter_tool_call
 from .adapters import stream as _adapter_stream
 from .cache import CACHE
 from .retry import with_retries
@@ -29,6 +30,7 @@ from .usage import StreamStats, Usage, estimate_tokens
 
 __all__ = [
     "CACHE_ENABLED",
+    "NativeToolsUnsupported",
     "ProviderError",
     "StreamStats",
     "TEMPERATURE",
@@ -36,8 +38,10 @@ __all__ = [
     "aclose_client",
     "cacheable",
     "call",
+    "call_tools",
     "reachable",
     "stream",
+    "supports_native_tools",
     "warm",
 ]
 
@@ -57,6 +61,78 @@ def fallback_for(spec: Specialist) -> Specialist | None:
 def cacheable() -> bool:
     """Only a deterministic (temperature 0) request may ever be replayed."""
     return CACHE_ENABLED and TEMPERATURE == 0
+
+
+class NativeToolsUnsupported(RuntimeError):
+    """This provider does not accept native tools; the loop keeps its text protocol."""
+
+
+def supports_native_tools(spec: Specialist) -> bool:
+    """Only the OpenAI-compatible wire format has a native tool call in this harness.
+
+    Anthropic and Google have their own shapes, and Ollama's native endpoint takes a
+    different one; they keep the text protocol rather than growing three more code paths
+    for an optimisation.
+    """
+    return protocol(spec) == "openai"
+
+
+async def call_tools(
+    spec: Specialist,
+    messages: list[dict[str, str]],
+    tools: list[dict],
+    temperature: float | None = None,
+) -> tuple[dict | None, str, Usage]:
+    """One native tool-call turn, through the same budget, deadline and retry policy."""
+    runtime.check_deadline()
+    budget = runtime.current_budget()
+    if budget is not None:
+        budget.check()
+    if not supports_native_tools(spec):
+        raise NativeToolsUnsupported(f"{spec.name} does not expose the OpenAI tool-call shape")
+    effective = TEMPERATURE if temperature is None else temperature
+    started = time.perf_counter()
+
+    async def on_retry(attempt: int, exc: BaseException, delay: float) -> None:
+        run = runtime.current_run()
+        event_log(
+            getattr(run, "run_id", "anonymous"),
+            "retry",
+            agent=spec.id,
+            attempt=attempt,
+            delay_s=delay,
+            error=str(exc)[:200],
+        )
+        await runtime.emit(
+            {
+                "type": "retry",
+                "agent": spec.id,
+                "attempt": attempt,
+                "delay_ms": int(delay * 1000),
+                "message": str(exc)[:200],
+            }
+        )
+
+    try:
+        call, text, usage = await with_retries(
+            lambda: _adapter_tool_call(spec, messages, tools, effective),
+            on_retry=on_retry,
+        )
+    except ProviderError as exc:
+        # A provider that does not implement `tools` answers 4xx. That is not a run
+        # failure; it is a signal to use the text protocol for the rest of the loop.
+        if exc.status in (400, 404, 422, 501):
+            raise NativeToolsUnsupported(str(exc)) from exc
+        raise
+
+    if not usage.prompt_tokens:
+        usage.estimated = True
+        usage.prompt_tokens = sum(estimate_tokens(str(m.get("content", ""))) for m in messages)
+    usage.ms += int((time.perf_counter() - started) * 1000)
+    usage.cost_usd = pricing.estimate(spec, usage.prompt_tokens, usage.completion_tokens)
+    if budget is not None:
+        budget.spend(usage.prompt_tokens + usage.completion_tokens, usage.cost_usd)
+    return call, text, usage
 
 
 async def stream(

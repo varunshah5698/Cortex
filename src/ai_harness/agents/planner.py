@@ -35,9 +35,9 @@ FAMILIES: list[tuple[str, re.Pattern, list[tuple[str, str, str, str]]]] = [
         _hints("vue", "nuxt"),
         [
             ("Manifest", "backend", "package.json", "name, dev/build scripts, and only the dependencies actually used"),
+            ("Shell", "frontend", "index.html", "the document with #app that loads /src/main.ts"),
             ("Entry", "frontend", "src/main.ts", "create the Vue app and mount it into #app"),
-            ("UI", "frontend", "src/App.vue", "the complete component tree for the request"),
-            ("Styles", "frontend", "src/style.css", "layout, spacing and theme"),
+            ("UI", "frontend", "src/App.vue", "the complete component tree for the request, styles included"),
         ],
     ),
     (
@@ -45,9 +45,9 @@ FAMILIES: list[tuple[str, re.Pattern, list[tuple[str, str, str, str]]]] = [
         _hints("svelte", "sveltekit"),
         [
             ("Manifest", "backend", "package.json", "name, dev/build scripts, and only the dependencies actually used"),
+            ("Shell", "frontend", "index.html", "the document with #app that loads /src/main.ts"),
             ("Entry", "frontend", "src/main.ts", "import the root component and mount it into #app"),
-            ("UI", "frontend", "src/App.svelte", "the complete component for the request"),
-            ("Styles", "frontend", "src/app.css", "layout, spacing and theme"),
+            ("UI", "frontend", "src/App.svelte", "the complete component for the request, styles included"),
         ],
     ),
     (
@@ -55,9 +55,9 @@ FAMILIES: list[tuple[str, re.Pattern, list[tuple[str, str, str, str]]]] = [
         _hints("react", "tsx", "jsx", "vite", "next.js", "nextjs"),
         [
             ("Manifest", "backend", "package.json", "name, dev/build scripts, and only the dependencies actually used"),
+            ("Shell", "frontend", "index.html", "the document with #root that loads /src/main.tsx"),
             ("Entry", "frontend", "src/main.tsx", "mount the app into #root"),
-            ("UI", "frontend", "src/App.tsx", "the complete component tree for the request"),
-            ("Styles", "frontend", "src/index.css", "layout, spacing and theme"),
+            ("UI", "frontend", "src/App.tsx", "the complete component tree for the request, styles included"),
         ],
     ),
     (

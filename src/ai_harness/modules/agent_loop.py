@@ -38,6 +38,7 @@ from ..config.settings import (
     AGENT_OBSERVATION_CHARS,
     AGENT_STEPS,
     MAX_FILE_BYTES,
+    NATIVE_TOOLS,
 )
 from ..models import Specialist
 from ..utils.validators import UnsafePath
@@ -72,6 +73,95 @@ TOOL_ALIASES = {
     "stop": "done",
     "complete": "done",
 }
+
+# The same seven capabilities, described once for providers that speak native tools.
+# The text protocol above remains the fallback and the only path for the other providers.
+TOOL_SPECS: list[dict] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "list",
+            "description": "List every file in the run workspace with line and byte counts.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read",
+            "description": "Return the exact current text of one file.",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search",
+            "description": "Find a literal string across the run's files.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "path": {"type": "string", "description": "Optional path prefix"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "edit",
+            "description": "Replace one exact, unique occurrence in a file. Preferred over write.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "find": {"type": "string"},
+                    "replace": {"type": "string"},
+                    "all": {"type": "boolean", "description": "Replace every occurrence"},
+                },
+                "required": ["path", "find", "replace"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write",
+            "description": "Replace a whole file. Use only when a whole file is the smallest fix.",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+                "required": ["path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check",
+            "description": "Run the harness's deterministic checks now.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "done",
+            "description": "Finish. Refused while the current check has errors.",
+            "parameters": {
+                "type": "object",
+                "properties": {"summary": {"type": "string"}},
+                "required": ["summary"],
+            },
+        },
+    },
+]
 
 # Two malformed turns in a row means this model cannot speak the protocol. Stop and let
 # the caller fall back to the whole-file rewrite instead of burning the step budget.
@@ -214,6 +304,7 @@ class LoopState:
     changed: bool = False
     dirty: bool = True
     last_written: str = ""
+    native: bool = NATIVE_TOOLS
 
     # ---------- prompt ----------
 
@@ -448,6 +539,7 @@ async def repair(
     run; it only decides whether the file was changed enough to be worth re-checking.
     """
     state = LoopState(run=run, agent=agent, path=path, findings=findings[:4000], check=check, max_steps=max_steps)
+    state.native = NATIVE_TOOLS
     await run.emit(
         {
             "type": "message",
@@ -479,17 +571,34 @@ async def repair(
                 findings=state.findings,
                 state=state.render(),
             )
-            text, usage = await llm.call(
-                agent,
-                [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": "Next action. Reply with one JSON object."},
-                ],
-                on_think=lambda chunk: run.emit({"type": "think", "agent": agent.id, "delta": chunk}),
-            )
-            await run.emit(run.track_usage(agent, "repair-loop", usage))
+            messages = [
+                {"role": "system", "content": system},
+                {"role": "user", "content": "Next action. Call one tool."},
+            ]
+            call: dict | None = None
+            error = ""
+            if state.native and llm.supports_native_tools(agent):
+                try:
+                    call, text, usage = await llm.call_tools(agent, messages, TOOL_SPECS)
+                except llm.NativeToolsUnsupported:
+                    # The provider rejects `tools`; stop paying for a rejected shape and
+                    # use the text protocol for the rest of this loop.
+                    state.native = False
+                    continue
+                await run.emit(run.track_usage(agent, "repair-loop", usage))
+                if call is not None and str(call.get("tool") or "") not in TOOLS:
+                    call, error = None, f"unknown tool {call.get('tool')!r}"
+                if call is None and not error:
+                    call, error = parse_step(text)
+            else:
+                text, usage = await llm.call(
+                    agent,
+                    messages,
+                    on_think=lambda chunk: run.emit({"type": "think", "agent": agent.id, "delta": chunk}),
+                )
+                await run.emit(run.track_usage(agent, "repair-loop", usage))
+                call, error = parse_step(text)
 
-            call, error = parse_step(text)
             if call is None:
                 state.parse_failures += 1
                 state.last_observation = (
