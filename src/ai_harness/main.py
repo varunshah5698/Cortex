@@ -42,6 +42,7 @@ from .config.settings import (
     KEYS_FILE,
     MAX_RUN_TOKENS,
     MAX_RUN_USD,
+    MAX_UNITS,
     NATIVE_TOOLS,
     ORIGINS,
     PUBLIC_ORIGIN,
@@ -369,7 +370,7 @@ def _session_cookie(response: JSONResponse, token: str, request: Request) -> Non
 
 @app.post("/api/auth/signup")
 async def auth_signup(payload: SignupIn, request: Request) -> JSONResponse:
-    _rate_limit(f"signup:{_client_host(request)}", limit=6)
+    _rate_limit(f"signup:{_client_host(request)}", limit=20)
     try:
         token, user = await asyncio.to_thread(AUTH.signup, payload.name, payload.email, payload.password)
     except AuthError as exc:
@@ -382,7 +383,7 @@ async def auth_signup(payload: SignupIn, request: Request) -> JSONResponse:
 @app.post("/api/auth/login")
 async def auth_login(payload: LoginIn, request: Request) -> JSONResponse:
     key = f"login:{payload.email.strip().lower()}:{_client_host(request)}"
-    _rate_limit(key)
+    _rate_limit(key, limit=20)
     try:
         token, user = await asyncio.to_thread(AUTH.login, payload.email, payload.password)
     except AuthError as exc:
@@ -450,6 +451,7 @@ async def health() -> dict:
         "limits": {
             "max_tokens": MAX_RUN_TOKENS,
             "max_usd": MAX_RUN_USD,
+            "max_units": MAX_UNITS,
             "retry_attempts": RETRY_ATTEMPTS,
             "agent_loop": {"enabled": AGENT_LOOP, "steps": AGENT_STEPS, "native_tools": NATIVE_TOOLS},
         },
