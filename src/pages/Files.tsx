@@ -148,8 +148,22 @@ export default function Files() {
                   <Icon name="link" size={13} /> Copy path
                 </button>
               )}
-              <button className="ghost-btn" onClick={() => navigator.clipboard?.writeText(content)}>
+              <button className="ghost-btn" onClick={() => navigator.clipboard?.writeText(content)} disabled={!content}>
                 <Icon name="download" size={13} /> Copy code
+              </button>
+              <button
+                className="ghost-btn"
+                disabled={!content}
+                onClick={() => {
+                  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+                  const link = document.createElement("a");
+                  link.href = URL.createObjectURL(blob);
+                  link.download = selected.split("/").pop() || "file.txt";
+                  link.click();
+                  URL.revokeObjectURL(link.href);
+                }}
+              >
+                <Icon name="download" size={13} /> Download
               </button>
             </div>
           </div>

@@ -10,6 +10,7 @@ import {
   fmtMs,
   fmtNumber,
   loadFile,
+  loadRuns,
   liveUrl,
   previewUrl,
   resumeRun,
@@ -127,6 +128,7 @@ export default function Build() {
   const [prompt, setPrompt] = useState("");
   const [depth, setDepth] = useState<Depth>("deep");
   const [runId, setRunId] = useState<string | null>(() => localStorage.getItem("cortex:lastRun"));
+  const [runs, setRuns] = useState<RunMetrics[]>([]);
   const [running, setRunning] = useState(false);
   const [phase, setPhase] = useState("idle");
   const [error, setError] = useState<string | null>(null);
@@ -550,6 +552,14 @@ export default function Build() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId]);
 
+  // The run picker is the room's history: reopening a past run reloads its ledger and
+  // files instead of leaving the operator with a blank stage after a refresh.
+  useEffect(() => {
+    loadRuns()
+      .then(setRuns)
+      .catch(() => {});
+  }, [runId, phase]);
+
   // A finished run is loaded from the server ledger, so the room still has its team
   // and the last numbers after a reload or a harness restart.
   useEffect(() => {
@@ -840,6 +850,28 @@ export default function Build() {
             {running || phase === "done" || phase === "failed" ? (startedAt ? fmtMs(elapsed) : "—") : "00:00"}
           </span>
           {runId && <code className="bld-id">{runId}</code>}
+          {runs.length > 0 && (
+            <select
+              className="bld-run-pick"
+              value={runId ?? ""}
+              onChange={(event) => {
+                const id = event.target.value;
+                if (!id) return;
+                localStorage.setItem("cortex:lastRun", id);
+                setService(null);
+                setShare(null);
+                setRunId(id);
+              }}
+              title="Reopen a previous run"
+            >
+              <option value="">History…</option>
+              {runs.slice(0, 20).map((run) => (
+                <option key={run.run_id} value={run.run_id}>
+                  {run.run_id} · {run.prompt.slice(0, 28)}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
 
         <div className="bld-head-actions">
