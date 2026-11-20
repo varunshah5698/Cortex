@@ -415,9 +415,12 @@ class LoopState:
             report = await self.check()
         except Exception as exc:  # noqa: BLE001 - a checker failure is an observation
             return f"CHECK FAILED TO RUN: {type(exc).__name__}: {exc}"
-        self.last_check = report if isinstance(report, dict) else {}
+        # A checker that answers something other than a report has not answered. Coercing
+        # it to `{}` made `finish` read "no issues, no errors" and accept `done` on work
+        # nothing had checked; leaving it unset makes the gate refuse instead.
+        self.last_check = report if isinstance(report, dict) else None
         self.dirty = False
-        signature = json.dumps(self.last_check.get("issues") or [], sort_keys=True, default=str)
+        signature = json.dumps((self.last_check or {}).get("issues") or [], sort_keys=True, default=str)
         if self.last_signature and signature == self.last_signature:
             self.no_progress += 1
         else:
@@ -541,7 +544,9 @@ class LoopState:
             if self.last_check is None:
                 return False, f"DONE REFUSED: the checks could not run.\n{observation}"
         report = self.last_check or {}
-        if report and not report.get("ok", True):
+        # `ok` must be present and true. A report with no `ok` key (or `{"errors": 3}`)
+        # used to default to clean, which is the harness vouching for a check it never saw.
+        if report.get("ok") is not True:
             errors = int(report.get("errors") or 0)
             return (
                 False,
