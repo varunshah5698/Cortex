@@ -108,6 +108,11 @@ ROSTER = RosterStore(ROSTER_FILE, KEYS_FILE)
 AUTH = AuthStore(AUTH_DB)
 SESSION_COOKIE = "cortex_session"
 SESSION_MAX_AGE = 30 * 24 * 60 * 60
+# This project's browser already defaults to the matching `.convex.cloud` deployment in
+# `src/lib/convex.ts`. Keep the server-side session bridge usable when a Render service was
+# created before CONVEX_SITE_URL was added to render.yaml and has not synced that variable.
+# The site URL is public; only CONVEX_HARNESS_SECRET and the deploy key are credentials.
+DEFAULT_CONVEX_SITE_URL = "https://dynamic-jay-407.convex.site"
 AUTH_OPEN = {
     "/api/auth/signup",
     "/api/auth/login",
@@ -462,13 +467,16 @@ async def auth_cloud(payload: CloudSessionIn, request: Request) -> JSONResponse:
 
     The token is *verified*, not trusted: the harness asks Convex who it belongs to and
     mints a session for that email. A forged or expired token gets no answer from Convex
-    and therefore no cookie. With no Convex URL configured there is nothing to verify
-    against, so the endpoint refuses rather than accepting the token on faith.
+    and therefore no cookie. An explicit Convex site wins; this Cortex deployment falls
+    back to the same public project URL as the browser when an older Render service has not
+    synced the variable from render.yaml.
     """
     _rate_limit(f"cloud-auth:{_client_host(request)}", limit=30)
-    site = (os.getenv("CONVEX_SITE_URL") or os.getenv("VITE_CONVEX_SITE_URL") or "").strip().rstrip("/")
-    if not site:
-        raise HTTPException(503, "Cloud sign-in is not configured on this server.")
+    site = (
+        (os.getenv("CONVEX_SITE_URL") or os.getenv("VITE_CONVEX_SITE_URL") or DEFAULT_CONVEX_SITE_URL)
+        .strip()
+        .rstrip("/")
+    )
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
