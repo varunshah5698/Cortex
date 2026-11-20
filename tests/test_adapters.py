@@ -60,6 +60,24 @@ def _spec(kind):
     )
 
 
+def test_hosted_concurrency_is_per_model_and_off_by_default(monkeypatch):
+    hosted = Specialist(
+        id="lyra",
+        name="Lyra",
+        role="reviewer",
+        kind="custom",
+        baseUrl="https://api.river.ai/v1",
+        model="deepseek-ai/DeepSeek-V4.1-Flash",
+    )
+    monkeypatch.setattr(adapters, "PROVIDER_CONCURRENCY", 0)
+    assert adapters._request_slot(hosted) is None
+
+    monkeypatch.setattr(adapters, "PROVIDER_CONCURRENCY", 1)
+    assert adapters._request_slot(hosted) is not None
+    assert adapters._request_slot(hosted) is adapters._request_slot(hosted)
+    assert adapters._request_slot(_spec("ollama")) is not None
+
+
 def test_ollama_retries_without_format_when_structured_output_is_unavailable(monkeypatch):
     fake = _Client(
         [

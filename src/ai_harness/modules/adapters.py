@@ -19,7 +19,13 @@ from collections.abc import AsyncIterator
 
 import httpx
 
-from ..config.settings import HTTP_TIMEOUT_READ, JSON_MODE, MAX_OUTPUT_TOKENS, PROVIDER_RATE_LIMIT
+from ..config.settings import (
+    HTTP_TIMEOUT_READ,
+    JSON_MODE,
+    MAX_OUTPUT_TOKENS,
+    PROVIDER_CONCURRENCY,
+    PROVIDER_RATE_LIMIT,
+)
 from ..models import Specialist
 from ..utils.netguard import UnsafeEndpoint, ensure_allowed
 from .usage import StreamStats, Usage
@@ -86,8 +92,11 @@ class _Bucket:
 _buckets: dict[tuple[str, str], _Bucket] = {}
 # A local daemon runs one generation at a time. Four contract calls fired at once used to
 # queue inside Ollama (and could take the daemon down with them); this lock makes the
-# harness wait its turn instead. Hosted providers keep their concurrency.
+# harness wait its turn instead.
 _local_locks: dict[tuple[str, str], asyncio.Lock] = {}
+# Hosted gateways can cap concurrency per account+model. `HARNESS_PROVIDER_CONCURRENCY`
+# sets how many requests one model may have in flight; 0 leaves it to the provider.
+_slots: dict[tuple[str, str], asyncio.Semaphore] = {}
 
 
 async def _throttle(spec: Specialist) -> None:
@@ -98,15 +107,24 @@ async def _throttle(spec: Specialist) -> None:
     await bucket.take()
 
 
-def _local_lock(spec: Specialist) -> asyncio.Lock | None:
-    """One lock per local endpoint+model: the daemon serves one request at a time."""
-    if not spec.is_local:
-        return None
+def _request_slot(spec: Specialist) -> asyncio.Lock | asyncio.Semaphore | None:
+    """The concurrency limit for one endpoint+model, or None for the provider's own.
+
+    A local daemon is always one at a time. A hosted gateway uses the configured
+    semaphore, because a 429 is cheaper to prevent than to retry.
+    """
     key = ((spec.baseUrl or "").rstrip("/"), spec.model or "")
-    lock = _local_locks.get(key)
-    if lock is None:
-        lock = _local_locks[key] = asyncio.Lock()
-    return lock
+    if spec.is_local:
+        lock = _local_locks.get(key)
+        if lock is None:
+            lock = _local_locks[key] = asyncio.Lock()
+        return lock
+    if PROVIDER_CONCURRENCY <= 0:
+        return None
+    slot = _slots.get(key)
+    if slot is None:
+        slot = _slots[key] = asyncio.Semaphore(PROVIDER_CONCURRENCY)
+    return slot
 
 
 # ---------- shared helpers ----------
@@ -484,13 +502,13 @@ async def stream(
         async for item in handler(spec, messages, think, temperature, json_mode, stats):
             yield item
 
-    lock = _local_lock(spec)
+    slot = _request_slot(spec)
     try:
-        if lock is None:
+        if slot is None:
             async for item in produce():
                 yield item
         else:
-            async with lock:
+            async with slot:
                 async for item in produce():
                     yield item
     except httpx.HTTPError as exc:
@@ -532,12 +550,12 @@ async def openai_tool_call(
         headers["Authorization"] = f"Bearer {spec.apiKey}"
         headers["x-api-key"] = spec.apiKey
 
-    lock = _local_lock(spec)
+    slot = _request_slot(spec)
     try:
-        if lock is None:
+        if slot is None:
             response = await client().post(f"{base}/chat/completions", headers=headers, json=body)
         else:
-            async with lock:
+            async with slot:
                 response = await client().post(f"{base}/chat/completions", headers=headers, json=body)
     except httpx.HTTPError as exc:
         raise ProviderError(f"{spec.name}: {type(exc).__name__} from {base}") from exc

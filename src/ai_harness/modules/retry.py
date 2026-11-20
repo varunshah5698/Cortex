@@ -12,6 +12,7 @@ provider streams mid-response. A `Retry-After` sets the floor for the backoff.
 from __future__ import annotations
 
 import asyncio
+import random
 
 from ..config.settings import RETRY_ATTEMPTS, RETRY_BASE_DELAY, RETRY_MAX_DELAY
 from .budget import BudgetExceeded
@@ -20,6 +21,8 @@ from .budget import BudgetExceeded
 RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504, 529}
 
 # No status available: transport failures, and providers that stream an error event.
+# A gateway can stream a 429 as an error frame in a 200 response (River does), so the
+# rate-limit wording must be recognizable without an HTTP status.
 RETRYABLE_HINTS = (
     "timeout",
     "timed out",
@@ -31,6 +34,11 @@ RETRYABLE_HINTS = (
     "overloaded",
     "temporarily",
     "unavailable",
+    "rate limit",
+    "rate_limit",
+    "ratelimit",
+    "too many requests",
+    "account_rate",
 )
 
 FATAL_HINTS = ("invalid api key", "no base url", "refusing", "not found")
@@ -54,8 +62,11 @@ def _delay(attempt: int, base_delay: float, exc: BaseException) -> float:
     requested = getattr(exc, "retry_after", None)
     numeric = isinstance(requested, float) or isinstance(requested, int)
     if numeric and requested > 0:
-        delay = max(delay, min(RETRY_MAX_DELAY, float(requested)))
-    return delay
+        # The provider's instruction is a floor, not a suggestion: jitter downward
+        # below `Retry-After` would ignore it and retry too early.
+        return max(float(requested), delay * random.uniform(0.8, 1.2))
+    # Jitter keeps a four-agent burst from retrying in lockstep.
+    return delay * random.uniform(0.8, 1.2)
 
 
 async def with_retries(factory, attempts: int = RETRY_ATTEMPTS, base_delay: float = RETRY_BASE_DELAY, on_retry=None):

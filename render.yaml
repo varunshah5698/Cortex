@@ -29,6 +29,9 @@ services:
         value: "1"
       - key: HARNESS_MAX_QUEUED_RUNS
         value: "2"
+      # River caps concurrency per account+model and answers 429 "account_rate".
+      - key: HARNESS_PROVIDER_CONCURRENCY
+        value: "1"
       # Required by the dashboard on first Blueprint sync: "user:password", or just a
       # password (user "cortex"). Without it the public URL can spend your provider keys.
       - key: HARNESS_BASIC_AUTH

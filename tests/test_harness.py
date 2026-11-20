@@ -29,7 +29,7 @@ from ai_harness.modules import (  # noqa: E402
 from ai_harness.modules.budget import Budget, BudgetExceeded  # noqa: E402
 from ai_harness.modules.cache import CACHE, ResponseCache  # noqa: E402
 from ai_harness.modules.llm import ProviderError  # noqa: E402
-from ai_harness.modules.retry import is_retryable, with_retries  # noqa: E402
+from ai_harness.modules.retry import _delay, is_retryable, with_retries  # noqa: E402
 from ai_harness.nodes import (
     execution,  # noqa: E402
     verify,  # noqa: E402
@@ -200,10 +200,23 @@ def test_retry_classification_tells_weather_from_credentials(tmp_path: Path) -> 
     assert is_retryable(ProviderError("Ada: ReadError from http://127.0.0.1:11434/v1"))
     assert is_retryable(ProviderError("Ada: ConnectError('connection reset')"))
     assert is_retryable(ProviderError("Ada: overloaded_error"))
+    # River streams a 429 as an error frame inside a 200 response, with no status.
+    assert is_retryable(
+        ProviderError(
+            "Lyra: {'message': 'Account request rate limit exceeded for this model', "
+            "'type': 'rate_limit_error', 'code': 'account_rate'}"
+        )
+    )
     assert not is_retryable(ProviderError("Ada: no base URL or model"))
     # anything unrecognised is not retried: the default is conservative
     assert not is_retryable(ValueError("bad plan"))
     assert not is_retryable(BudgetExceeded("stop"))
+
+
+def test_retry_after_is_a_floor_not_a_jittered_suggestion(tmp_path: Path) -> None:
+    exc = ProviderError("Ada: HTTP 429 rate limit", status=429, retry_after=90.0)
+    # jitter may add, never subtract, from what the provider asked for
+    assert _delay(1, 0.75, exc) >= 90.0
 
 
 def test_retry_recovers_from_a_transient_failure(tmp_path: Path) -> None:
