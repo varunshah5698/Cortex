@@ -69,7 +69,8 @@ class Orchestrator:
         # short instead of a green run with broken files.
         report = self.run.verification or {}
         if not report.get("ok", True):
-            report = await review.repair(self.run, reviewer_agent, units, rounds=REPAIR_ROUNDS)
+            rounds = REPAIR_ROUNDS * 2 if self.run.depth == "ultra" else REPAIR_ROUNDS
+            report = await review.repair(self.run, reviewer_agent, units, rounds=rounds)
         if not report.get("ok", True):
             self.run.done = False
             self.persist_metrics()

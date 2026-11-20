@@ -47,7 +47,7 @@ def last_question(turns: list[dict[str, str]]) -> str:
 
 # How much reasoning a message may spend before it answers. Each step is a model call:
 # off answers directly, brief reasons then answers, deep also checks its own direction.
-DEPTHS = ("off", "brief", "deep")
+DEPTHS = ("off", "brief", "deep", "ultra")
 DEFAULT_DEPTH = "brief"
 
 
@@ -163,7 +163,13 @@ async def run_chat(
                     "content": prompts.CHAT_REASON.format(
                         name=specialist.name,
                         role=specialist.role,
-                        words=REASONING_WORDS if depth == "deep" else max(140, REASONING_WORDS // 2),
+                        words=(
+                            REASONING_WORDS * 2
+                            if depth == "ultra"
+                            else REASONING_WORDS
+                            if depth == "deep"
+                            else max(140, REASONING_WORDS // 2)
+                        ),
                     ),
                 },
                 *turns,
@@ -219,7 +225,41 @@ async def run_chat(
     check_text = direction or raw.strip()[:500]
     await run.emit({"type": "check", "verdict": verdict, "text": check_text})
 
-    # Pass 3 — the answer, following the direction the self-check settled on.
+    if depth == "ultra":
+        # Pass 3 — a second, adversarial reviewer. The first check is context, not a
+        # ceiling: this one is asked to find the failure the first one missed.
+        await run.emit({"type": "phase", "phase": "check"})
+        try:
+            red, red_usage = await llm.call(
+                specialist,
+                [
+                    {
+                        "role": "system",
+                        "content": prompts.CHAT_RED_TEAM.format(
+                            request=question,
+                            reasoning=reasoning[-6000:],
+                            check=raw[-2000:],
+                        ),
+                    },
+                    {"role": "user", "content": "Attack the direction. Give the verdict."},
+                ],
+            )
+        except llm.ProviderError as exc:
+            await _fail(run, specialist, exc)
+            return
+        await run.emit(run.track_usage(specialist, "red-team", red_usage))
+        red_verdict, red_direction = read_check(red)
+        red_text = red_direction or red.strip()[:500]
+        await run.emit(
+            {
+                "type": "check",
+                "verdict": red_verdict,
+                "text": f"Second reviewer: {red_text}",
+            }
+        )
+        check_text = f"{check_text}\n\nSecond reviewer ({red_verdict}): {red_text}"
+
+    # Pass 4 — the answer, following the direction the checks settled on.
     await _answer(
         run,
         specialist,

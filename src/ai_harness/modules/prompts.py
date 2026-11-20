@@ -257,6 +257,22 @@ VERDICT: ON TRACK | ADJUST
 DIRECTION: one or two sentences. If ON TRACK, the single most important thing to keep.
 If ADJUST, say precisely where the plan drifts and the correct direction. No preamble."""
 
+CHAT_RED_TEAM = """You are the adversary. A first reviewer already checked this plan; your job is the failure it missed.
+
+What the person asked:
+{request}
+
+The reasoning:
+{reasoning}
+
+The first review:
+{check}
+
+Attack it. Look for a wrong assumption, a missing constraint, a plausible but unusable
+answer, or a drift from the request. Reply in exactly this shape:
+VERDICT: ON TRACK | ADJUST
+DIRECTION: the one correction the answer must make. No preamble."""
+
 CHAT_ANSWER = """You are {name}, the {role} specialist. You already reasoned through this privately.
 
 Your private reasoning (context only — the person never sees it):

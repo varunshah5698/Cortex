@@ -80,6 +80,9 @@ FALLBACK_KIND = os.getenv("HARNESS_FALLBACK_KIND", "").strip()
 
 WORKSPACE_ROOT = Path(os.getenv("HARNESS_WORKSPACE", ROOT / "workspace"))
 RUNS_ROOT = WORKSPACE_ROOT / "runs"
+# Accounts and sessions. On Render this sits beside the workspace; point it at a disk
+# path to survive restarts and free-tier sleeps.
+AUTH_DB = Path(os.getenv("HARNESS_AUTH_DB", str(WORKSPACE_ROOT / "auth.db")))
 LOGS_ROOT = ROOT / "logs"
 DIST_DIR = ROOT / "dist"
 
@@ -136,8 +139,8 @@ EVENT_MEMORY_LIMIT = max(200, _int("HARNESS_EVENT_MEMORY", 4000))
 TRANSCRIPT_MAX_BYTES = max(64 * 1024, _int("HARNESS_TRANSCRIPT_BYTES", 8 * 1024 * 1024))
 
 # Cost control: a run stops at whichever limit is reached first (0 disables a limit).
-MAX_RUN_TOKENS = _int("HARNESS_MAX_TOKENS", 600000)
-MAX_RUN_USD = _float("HARNESS_MAX_USD", 5.0)
+MAX_RUN_TOKENS = _int("HARNESS_MAX_TOKENS", 1500000)
+MAX_RUN_USD = _float("HARNESS_MAX_USD", 20.0)
 MAX_RUN_CALLS = _int("HARNESS_MAX_CALLS", 0)
 
 # Sampling temperature. Above 0 the provider samples, so the same prompt can produce

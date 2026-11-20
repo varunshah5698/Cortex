@@ -182,7 +182,7 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
                         prompt=run.prompt,
                         contracts=peers,
                         notes=research,
-                        words=REASONING_WORDS,
+                        words=REASONING_WORDS * 2 if run.depth == "ultra" else REASONING_WORDS,
                     ),
                 },
                 {"role": "user", "content": f"Think through {unit.file} now."},
@@ -194,7 +194,7 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
         # Pass 1.5 — a different specialist attacks the plan before any code exists.
         # Separation is the point: the model that wrote the plan is its worst judge.
         critique = ""
-        if run.depth == "deep" and REASONING_CRITIC:
+        if run.depth in ("deep", "ultra") and REASONING_CRITIC:
             # Prefer a dedicated reviewer; with none configured, another specialist is
             # still a better critic than the author grading their own plan.
             critic = next((s for s in run.specialists if s.role == "reviewer" and s.id != agent.id), None)
@@ -219,6 +219,35 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
             await run.emit(run.track_usage(critic, "critique", critic_usage))
             await run.emit({"type": "status", "agent": critic.id, "status": "idle"})
 
+            if run.depth == "ultra":
+                # A second reader sees the plan and the first critique, and is asked for
+                # what the first missed. Two independent attacks beat one longer one.
+                second = next((s for s in run.specialists if s.id not in (agent.id, critic.id)), critic)
+                await run.emit({"type": "status", "agent": second.id, "status": "thinking"})
+                extra, extra_usage = await executor.critique(
+                    second,
+                    [
+                        {
+                            "role": "system",
+                            "content": prompts.REASON_CRITIC.format(
+                                prompt=run.prompt,
+                                file=unit.file,
+                                contracts=peers,
+                                reasoning=context.clip(
+                                    f"{reasoning}\n\nFirst reviewer:\n{critique}",
+                                    1800,
+                                ),
+                            ),
+                        },
+                        {"role": "user", "content": f"Find what the first reviewer missed in {unit.file}."},
+                    ],
+                    on_think=lambda text: run.emit({"type": "think", "agent": second.id, "delta": text}),
+                )
+                await run.emit(run.track_usage(second, "critique-2", extra_usage))
+                await run.emit({"type": "status", "agent": second.id, "status": "idle"})
+                if extra:
+                    critique = f"{critique}\n\nSecond reviewer:\n{extra}"
+
         # Pass 2 — the file itself, written against the agent's own plan. The answer may
         # carry extra files behind <<<FILE path>>> markers; each lands on its own path.
         await run.emit({"type": "status", "agent": agent.id, "status": "writing"})
@@ -233,8 +262,9 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
                         file=unit.file,
                         objective=unit.objective,
                         prompt=run.prompt,
-                        reasoning=context.clip(reasoning, 700),
-                        critique=context.clip(critique, 700) or "(no reviewer pass for this run)",
+                        reasoning=context.clip(reasoning, 1400 if run.depth == "ultra" else 700),
+                        critique=context.clip(critique, 1600 if run.depth == "ultra" else 700)
+                        or "(no reviewer pass for this run)",
                         contracts=peers,
                         peer_files=context.files_context(run.files, exclude=unit.file),
                         progress=progress.orient(run),

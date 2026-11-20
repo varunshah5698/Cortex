@@ -31,7 +31,7 @@ export type ChatMessage = {
 export type ChatPhase = "idle" | "thinking" | "check" | "answering";
 
 /** How much reasoning one message may spend before it answers. */
-export type ReasoningDepth = "off" | "brief" | "deep";
+export type ReasoningDepth = "off" | "brief" | "deep" | "ultra";
 
 /**
  * Each step is a model call, and the wait is that many round trips: `off` answers
@@ -47,9 +47,15 @@ export const REASONING: Record<ReasoningDepth, { label: string; calls: number; s
     seconds: 60,
     hint: "Reasoning, a self-check of its direction, then the answer",
   },
+  ultra: {
+    label: "Ultra",
+    calls: 4,
+    seconds: 90,
+    hint: "Long reasoning, a self-check, an adversarial second read, then the answer",
+  },
 };
 
-export const REASONING_ORDER: ReasoningDepth[] = ["off", "brief", "deep"];
+export const REASONING_ORDER: ReasoningDepth[] = ["off", "brief", "deep", "ultra"];
 
 /**
  * The prompt a build is seeded with: the request, the agreed answer, and the reasoning

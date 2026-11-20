@@ -12,6 +12,7 @@ import {
   loadFile,
   liveUrl,
   previewUrl,
+  resumeRun,
   serviceStatus,
   shareStatus,
   startRun,
@@ -45,6 +46,18 @@ const PHASE: Record<string, string> = {
   done: "Shipped",
   failed: "Failed",
 };
+
+const PIPELINE_STAGES = [
+  "planning",
+  "scaffolding",
+  "research",
+  "contracts",
+  "building",
+  "reviewing",
+  "revising",
+  "synthesizing",
+  "done",
+] as const;
 
 const zoneFor = (role: string): Zone => {
   if (role === "planner") return "planning";
@@ -133,9 +146,19 @@ export default function Build() {
   const [finishedAt, setFinishedAt] = useState<number | null>(null);
   const [now, setNow] = useState(Date.now());
   const [service, setService] = useState<RunService | null>(null);
+  const [serviceBusy, setServiceBusy] = useState(false);
   const [browserBusy, setBrowserBusy] = useState(false);
   const [share, setShare] = useState<RunShare | null>(null);
   const [shareBusy, setShareBusy] = useState(false);
+  // One switch for the whole room: when it is on, installs, builds and shares run
+  // without a second click. The human decision is this toggle, made once.
+  const [autoApprove, setAutoApprove] = useState(() => localStorage.getItem("cortex:autoApprove") === "1");
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteQuery, setPaletteQuery] = useState("");
+  const [railOpen, setRailOpen] = useState(true);
+  const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [planQuery, setPlanQuery] = useState("");
+  const [streamTab, setStreamTab] = useState<"live" | "activity">("live");
   const [tools, setTools] = useState<
     { id: number; tool: string; result: string; ms: number; ok: boolean; phase?: string }[]
   >([]);
@@ -143,6 +166,10 @@ export default function Build() {
   const feedId = useRef(0);
   const toolId = useRef(0);
   const runIdRef = useRef<string | null>(runId);
+  // The latest service request wins. The automatic preview after `done` used to race
+  // the operator's approval and put the room back into `needs_approval`.
+  const serviceSeq = useRef(0);
+  const startedKey = useRef<string | null>(null);
 
   const totals = useMemo(() => {
     const list = Object.values(agents);
@@ -159,6 +186,14 @@ export default function Build() {
     return () => clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), 7000);
+    return () => clearTimeout(timer);
+  }, [notice]);
+
+
+
   const patchAgent = useCallback((id: string, patch: Partial<AgentState>) => {
     setAgents((prev) => {
       const current =
@@ -169,6 +204,7 @@ export default function Build() {
 
   useEffect(() => {
     runIdRef.current = runId;
+    startedKey.current = null;
   }, [runId]);
 
   // The room follows the roster. Hydration lands after the first paint, so a specialist
@@ -200,15 +236,28 @@ export default function Build() {
 
   // Install, build and serve the workspace — the preview stops being a snapshot.
   // `restart` stops the running server first, so an edited file is rebuilt.
-  const boot = useCallback(async (id: string, restart = false, approve = false) => {
-    setLogsOpen(true);
-    try {
-      setService(await startService(id, restart, approve));
-    } catch (err) {
-      setService(null);
-      setNotice(err instanceof Error ? err.message : "The harness did not answer — is it running on :8000?");
-    }
-  }, []);
+  const boot = useCallback(
+    async (id: string, restart = false, approve = false) => {
+      const seq = ++serviceSeq.current;
+      setServiceBusy(true);
+      setLogsOpen(true);
+      try {
+        const next = await startService(id, restart, approve || autoApprove);
+        if (seq === serviceSeq.current) setService(next);
+        if (next.state === "needs_approval") {
+          setNotice("The preview is waiting for your approval — use Approve all when you are ready.");
+        }
+      } catch (err) {
+        if (seq === serviceSeq.current) {
+          setService(null);
+          setError(err instanceof Error ? err.message : "The harness did not answer — is it running on :8000?");
+        }
+      } finally {
+        if (seq === serviceSeq.current) setServiceBusy(false);
+      }
+    },
+    [autoApprove],
+  );
 
   // Tier 4: open the served page in headless Chrome. The report is also emitted on the
   // run's event stream, so this button is for a fresh look, not the only way to see it.
@@ -251,6 +300,47 @@ export default function Build() {
     }
   }, []);
 
+  const toggleAutoApprove = useCallback(() => {
+    setAutoApprove((current) => {
+      const next = !current;
+      localStorage.setItem("cortex:autoApprove", next ? "1" : "0");
+      setNotice(
+        next
+          ? "Auto-approve on — installs, builds and shares will run without asking again."
+          : "Auto-approve off — the next install or build will ask first.",
+      );
+      return next;
+    });
+  }, []);
+
+  // One button for everything the room is waiting on. The service install/build and the
+  // public share are separate checkpoints, so "approve all" clears both.
+  const approveAll = useCallback(async () => {
+    if (!runId) return;
+    if (localStorage.getItem(approvedKey(runId)) !== "1") {
+      localStorage.setItem(approvedKey(runId), "1");
+    }
+    await boot(runId, false, true);
+    if (share?.state === "needs_approval") await shareRun(runId, true);
+  }, [boot, runId, share?.state, shareRun]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const command = event.metaKey || event.ctrlKey;
+      if (command && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteOpen((value) => !value);
+      }
+      if (command && event.shiftKey && event.key.toLowerCase() === "a") {
+        event.preventDefault();
+        void approveAll();
+      }
+      if (event.key === "Escape") setPaletteOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [approveAll]);
+
   const unshareRun = useCallback(async (id: string) => {
     setShareBusy(true);
     try {
@@ -266,19 +356,29 @@ export default function Build() {
   const handle = useCallback(
     (event: HarnessEvent) => {
       switch (event.type) {
-        case "start":
+        case "start": {
+          // EventSource reconnects and replays from `start`. Wiping the room on every
+          // replay made finished files, the feed and the live text disappear mid-run.
+          const replay = startedKey.current === runIdRef.current;
+          startedKey.current = runIdRef.current;
           setRunning(true);
           setPhase("planning");
           // Replays carry the run's own timestamps, so an old run shows its real duration.
           // A run that predates timestamps shows no duration rather than a made-up one.
           setStartedAt(event.created ? Date.parse(event.created) || null : null);
           setFinishedAt(null);
-          setFeed([]);
-          setLive({});
-          setScaffold([]);
-          setUnits([]);
-          setSources([]);
+          if (!replay) {
+            setFeed([]);
+            setLive({});
+            setScaffold([]);
+            setUnits([]);
+            setSources([]);
+            setFiles([]);
+            setTools([]);
+            setSelected(null);
+          }
           break;
+        }
         case "phase":
           setPhase(event.phase);
           break;
@@ -411,7 +511,7 @@ export default function Build() {
               ? "Run complete — checks clean and already previewed"
               : "Run complete — verified only: nothing has compiled it yet, the preview does that next",
           );
-          if (runIdRef.current) void boot(runIdRef.current);
+          if (runIdRef.current) void boot(runIdRef.current, false, autoApprove);
           break;
         case "error":
           setError(event.message);
@@ -427,7 +527,7 @@ export default function Build() {
           break;
       }
     },
-    [boot, patchAgent],
+    [autoApprove, boot, patchAgent],
   );
 
   useEffect(() => {
@@ -550,10 +650,10 @@ export default function Build() {
   // approval is per run and kept in this browser; Stop removes it.
   useEffect(() => {
     if (!runId || running || phase !== "done" || serviceState) return;
-    if (localStorage.getItem(approvedKey(runId)) !== "1") return;
+    if (localStorage.getItem(approvedKey(runId)) !== "1" && !autoApprove) return;
     setNotice("Restoring the preview you approved for this run.");
     void boot(runId, false, true);
-  }, [runId, running, phase, serviceState, boot]);
+  }, [autoApprove, runId, running, phase, serviceState, boot]);
 
   // A service that just became ready means a fresh document to load.
   useEffect(() => {
@@ -584,6 +684,16 @@ export default function Build() {
     setRunning(true);
     setAgents(seed(team));
     setStartedAt(Date.now());
+    setFinishedAt(null);
+    setFiles([]);
+    setTools([]);
+    setFeed([]);
+    setLive({});
+    setScaffold([]);
+    setUnits([]);
+    setSources([]);
+    setSelected(null);
+    setShare(null);
     try {
       const id = await startRun(prompt.trim(), team, depth);
       localStorage.setItem("cortex:lastRun", id);
@@ -636,8 +746,73 @@ export default function Build() {
     };
   }, [runId, selectedFile, live]);
 
+  const serviceNeedsApproval = serviceState === "needs_approval";
+  const shareNeedsApproval = share?.state === "needs_approval";
+  const pendingCount = (serviceNeedsApproval ? 1 : 0) + (shareNeedsApproval ? 1 : 0);
+  const phaseIndex = PIPELINE_STAGES.indexOf(phase as (typeof PIPELINE_STAGES)[number]);
+  const doneUnits = units.filter((unit) => files.some((file) => file.path === unit.file && file.done)).length;
+  const progress = units.length ? Math.round((doneUnits / units.length) * 100) : phase === "done" ? 100 : 0;
+  const planFiltered = units.filter((unit) => unit.file.toLowerCase().includes(planQuery.toLowerCase().trim()));
+  const fileOptions = [...new Set([...scaffold, ...files.map((file) => file.path)])];
+  const writingAgents = Object.values(agents).filter((agent) =>
+    ["thinking", "researching", "reviewing", "coding", "writing"].includes(agent.status),
+  );
+  const commands: { id: string; label: string; hint?: string; run: () => void; disabled?: boolean }[] = [
+    {
+      id: "approve",
+      label: "Approve all pending actions",
+      hint: "⇧⌘A",
+      run: () => void approveAll(),
+      disabled: pendingCount === 0 || serviceBusy || shareBusy,
+    },
+    { id: "auto", label: `${autoApprove ? "Turn off" : "Turn on"} auto-approve`, run: toggleAutoApprove },
+    {
+      id: "preview",
+      label: serviceState === "ready" ? "Restart the preview" : "Run the preview",
+      run: () => runId && void boot(runId, serviceState === "ready"),
+      disabled: !runId || running || serviceBusy,
+    },
+    {
+      id: "stop-preview",
+      label: "Stop the preview",
+      run: () => runId && void stopService(runId).then(setService).catch(() => {}),
+      disabled: !runId || !serviceState || serviceState === "idle",
+    },
+    {
+      id: "browser",
+      label: "Check the preview in a browser",
+      run: () => runId && void checkInBrowser(runId),
+      disabled: !runId || serviceState !== "ready" || browserBusy,
+    },
+    {
+      id: "share",
+      label: share?.state === "ready" ? "Stop the public share" : "Share this run publicly",
+      run: () => runId && void (share?.state === "ready" ? unshareRun(runId) : shareRun(runId)),
+      disabled: !runId || shareBusy,
+    },
+    { id: "files", label: "Open the file explorer", run: () => navigate("files") },
+    { id: "metrics", label: "Open runtime & metrics", run: () => navigate("metrics") },
+    { id: "team", label: "Open the workshop", run: () => navigate("workshop") },
+    { id: "rail", label: railOpen ? "Hide the mission rail" : "Show the mission rail", run: () => setRailOpen((v) => !v) },
+    {
+      id: "inspector",
+      label: inspectorOpen ? "Hide the inspector" : "Show the inspector",
+      run: () => setInspectorOpen((v) => !v),
+    },
+    {
+      id: "copy-run",
+      label: "Copy the run id",
+      run: () => runId && void navigator.clipboard?.writeText(runId),
+      disabled: !runId,
+    },
+    { id: "reload", label: "Reload the preview frame", run: () => setFrame((v) => v + 1) },
+  ];
+  const visibleCommands = commands.filter((command) =>
+    command.label.toLowerCase().includes(paletteQuery.toLowerCase().trim()),
+  );
+
   return (
-    <div className="bld">
+    <div className={`bld${railOpen ? "" : " is-rail-closed"}${inspectorOpen ? "" : " is-inspector-closed"}`}>
       <header className="bld-head">
         <button className="bld-brand" onClick={() => navigate("landing")}>
           <span className="site-mark">
@@ -657,21 +832,172 @@ export default function Build() {
           {runId && <code className="bld-id">{runId}</code>}
         </div>
 
-        <nav className="bld-nav">
-          <button onClick={() => navigate("files")}>
-            <Icon name="folder" size={14} /> Files
-            <i>{scaffold.length || files.length || ""}</i>
+        <div className="bld-head-actions">
+          <button
+            className={`bld-auto${autoApprove ? " is-on" : ""}`}
+            onClick={toggleAutoApprove}
+            title="Approve installs, builds and shares without asking again"
+          >
+            <span className="bld-switch" />
+            Auto-approve
           </button>
-          <button onClick={() => navigate("metrics")}>
-            <Icon name="route" size={14} /> Runtime
+          {pendingCount > 0 && (
+            <button className="bld-approve" onClick={() => void approveAll()} disabled={serviceBusy || shareBusy}>
+              <Icon name="check" size={13} />
+              {serviceBusy ? "Approving…" : `Approve all · ${pendingCount}`}
+            </button>
+          )}
+          <button className="bld-iconbtn" onClick={() => setPaletteOpen(true)} title="Command palette (⌘K)">
+            <Icon name="search" size={14} />
+            <kbd>⌘K</kbd>
           </button>
-          <button onClick={() => navigate("workshop")}>
-            <Icon name="sliders" size={14} /> Team
+          <button className="bld-iconbtn" onClick={() => setRailOpen((v) => !v)} title="Toggle the mission rail">
+            <Icon name="layers" size={14} />
           </button>
-        </nav>
+          <button className="bld-iconbtn" onClick={() => setInspectorOpen((v) => !v)} title="Toggle the inspector">
+            <Icon name="eye" size={14} />
+          </button>
+          <button className="bld-iconbtn" onClick={() => navigate("files")} title="File explorer">
+            <Icon name="folder" size={14} />
+            {(scaffold.length || files.length) > 0 && <i>{scaffold.length || files.length}</i>}
+          </button>
+          <button className="bld-iconbtn" onClick={() => navigate("metrics")} title="Runtime & metrics">
+            <Icon name="route" size={14} />
+          </button>
+          <button className="bld-iconbtn" onClick={() => navigate("workshop")} title="Team workshop">
+            <Icon name="sliders" size={14} />
+          </button>
+        </div>
       </header>
 
       <div className="bld-body">
+        {railOpen && (
+          <aside className="bld-rail">
+            <section className="rail-card rail-mission">
+              <header>
+                <span>Mission</span>
+                <em className={running ? "is-live" : ""}>{running ? "live" : phase === "done" ? "shipped" : "idle"}</em>
+              </header>
+              <p>{objective || "The team's objective appears here after planning."}</p>
+              <div className="rail-stats">
+                <span>
+                  <b>{units.length || scaffold.length}</b> files
+                </span>
+                <span>
+                  <b>{fmtNumber(totals.tokens)}</b> tokens
+                </span>
+                <span>
+                  <b>{fmtMs(elapsed)}</b> elapsed
+                </span>
+              </div>
+              {runId && (
+                <button className="rail-copy" onClick={() => void navigator.clipboard?.writeText(runId)}>
+                  <Icon name="link" size={11} /> {runId}
+                </button>
+              )}
+            </section>
+
+            <section className="rail-card">
+              <header>
+                <span>Pipeline</span>
+                <em>{progress}%</em>
+              </header>
+              <div className="rail-progress">
+                <i style={{ width: `${progress}%` }} />
+              </div>
+              <ol className="rail-steps">
+                {PIPELINE_STAGES.map((stage, index) => {
+                  const step =
+                    phase === "done" ? "done" : index < phaseIndex ? "done" : index === phaseIndex ? "active" : "next";
+                  return (
+                    <li className={`rail-step is-${step}`} key={stage}>
+                      <i />
+                      <span>{PHASE[stage] ?? stage}</span>
+                    </li>
+                  );
+                })}
+              </ol>
+            </section>
+
+            <section className="rail-card rail-plan-card">
+              <header>
+                <span>Plan</span>
+                <em>
+                  {doneUnits}/{units.length || 0}
+                </em>
+              </header>
+              <label className="rail-search">
+                <Icon name="search" size={12} />
+                <input value={planQuery} onChange={(event) => setPlanQuery(event.target.value)} placeholder="Filter files" />
+              </label>
+              <div className="rail-plan">
+                {planFiltered.map((unit) => {
+                  const done = files.some((file) => file.path === unit.file && file.done);
+                  const active = Object.values(agents).some((agent) => agent.file === unit.file) || Boolean(live[unit.file]);
+                  return (
+                    <button
+                      className={`rail-unit${done ? " is-done" : ""}${active ? " is-live" : ""}${
+                        selectedFile === unit.file ? " is-selected" : ""
+                      }`}
+                      key={unit.id}
+                      onClick={() => {
+                        setSelected(unit.file);
+                        setTab("runtime");
+                      }}
+                    >
+                      <i style={{ ["--tone" as string]: roleColor(unit.role) }} />
+                      <span>
+                        <b>{base(unit.file)}</b>
+                        <em>{unit.file}</em>
+                      </span>
+                      <small>{agents[unit.agent]?.name ?? unit.agent}</small>
+                    </button>
+                  );
+                })}
+                {units.length === 0 && <p className="rail-empty">The plan appears when the room starts.</p>}
+                {units.length > 0 && planFiltered.length === 0 && <p className="rail-empty">No file matches that filter.</p>}
+              </div>
+            </section>
+
+            <section className={`rail-card rail-approvals${pendingCount ? " is-waiting" : ""}`}>
+              <header>
+                <span>Approvals</span>
+                <em>{pendingCount ? `${pendingCount} waiting` : "clear"}</em>
+              </header>
+              {pendingCount === 0 ? (
+                <p className="rail-clear">
+                  <Icon name="check" size={13} /> Nothing is waiting.{" "}
+                  {autoApprove ? "Everything runs automatically." : "Installs and builds ask once."}
+                </p>
+              ) : (
+                <>
+                  {serviceNeedsApproval && (
+                    <div className="rail-pending">
+                      <b>Preview</b>
+                      <span>{service?.pending?.join(" · ") || "install, build and serve"}</span>
+                    </div>
+                  )}
+                  {shareNeedsApproval && (
+                    <div className="rail-pending">
+                      <b>Public share</b>
+                      <span>{share?.command || "temporary public tunnel"}</span>
+                    </div>
+                  )}
+                  <button
+                    className="rail-approve-all"
+                    onClick={() => void approveAll()}
+                    disabled={serviceBusy || shareBusy}
+                  >
+                    <Icon name="check" size={13} /> {serviceBusy ? "Approving…" : "Approve all"}
+                  </button>
+                </>
+              )}
+              <button className={`rail-auto${autoApprove ? " is-on" : ""}`} onClick={toggleAutoApprove}>
+                <span className="bld-switch" /> Auto-approve everything
+              </button>
+            </section>
+          </aside>
+        )}
         <section className="bld-room">
           <div className="bld-room-bar">
             <span className="bld-objective">
@@ -700,21 +1026,76 @@ export default function Build() {
             }}
           />
 
-          {units.length > 0 && (
-            <div className="bld-units">
-              {units.map((unit) => {
-                const owner = agents[unit.agent];
-                const done = files.some((f) => f.path === unit.file && f.done);
-                return (
-                  <span className={`bld-unit${done ? " is-done" : ""}`} key={unit.id}>
-                    <i style={{ ["--tone" as string]: roleColor(unit.role) }} />
-                    <b>{unit.file}</b>
-                    <em>{owner?.name ?? unit.agent}</em>
-                  </span>
-                );
-              })}
-            </div>
-          )}
+          <div className="bld-floor">
+            <header className="bld-floor-head">
+              <div className="bld-floor-tabs">
+                <button className={streamTab === "live" ? "is-active" : ""} onClick={() => setStreamTab("live")}>
+                  Live floor
+                </button>
+                <button className={streamTab === "activity" ? "is-active" : ""} onClick={() => setStreamTab("activity")}>
+                  Activity <i>{feed.length}</i>
+                </button>
+              </div>
+              <div className="bld-floor-tools">
+                <select value={selectedFile} onChange={(event) => setSelected(event.target.value)}>
+                  <option value="">select a file</option>
+                  {fileOptions.map((path) => (
+                    <option key={path} value={path}>
+                      {path}
+                    </option>
+                  ))}
+                </select>
+                <button onClick={() => void navigator.clipboard?.writeText(peek)} disabled={!peek} title="Copy the selected file">
+                  <Icon name="download" size={13} />
+                </button>
+                <button onClick={() => setTab("runtime")} title="Open the inspector">
+                  <Icon name="arrowRight" size={13} />
+                </button>
+              </div>
+            </header>
+            {streamTab === "live" ? (
+              <div className="bld-floor-grid">
+                <div className="bld-writing">
+                  <h4>Writing now</h4>
+                  {writingAgents.map((agent) => (
+                    <article className="bld-write-card" key={agent.id}>
+                      <i style={{ ["--tone" as string]: roleColor(agent.role) }} />
+                      <div>
+                        <b>{agent.name}</b>
+                        <em>{agent.file ? base(agent.file) : agent.status}</em>
+                        <p>{agent.bubble || agent.thought.slice(-110) || "waiting for the next turn"}</p>
+                      </div>
+                      <small>{fmtNumber(agent.tokens)} tok</small>
+                    </article>
+                  ))}
+                  {writingAgents.length === 0 && (
+                    <p className="rail-empty">
+                      {running ? "The team is between turns." : "Send a brief and the room comes alive."}
+                    </p>
+                  )}
+                </div>
+                <div className="bld-peek">
+                  <header>
+                    <b>{selectedFile || "no file selected"}</b>
+                    <span>{peek ? `${peek.split("\n").length} lines` : "—"}</span>
+                  </header>
+                  <pre>{peek.slice(-2200) || "The file streams in here while an agent writes it."}</pre>
+                </div>
+              </div>
+            ) : (
+              <div className="bld-activity">
+                {feed.length === 0 && <p className="rail-empty">Conversation between specialists appears here.</p>}
+                {feed.slice(-10).map((line) => (
+                  <div className={`bld-act kind-${line.kind}`} key={line.id}>
+                    <span style={{ ["--tone" as string]: roleColor(agents[line.from]?.role ?? "") }}>
+                      {agents[line.from]?.name ?? line.from}
+                    </span>
+                    <p>{line.text}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </section>
 
         <aside className="bld-panel">
@@ -731,6 +1112,22 @@ export default function Build() {
               <div className="pv">
                 {runId ? (
                   <>
+                    {serviceNeedsApproval && (
+                      <div className="pv-approval">
+                        <Icon name="alert" size={15} />
+                        <div>
+                          <b>The preview is waiting for you</b>
+                          <span>
+                            {service?.pending?.join(" · ") ||
+                              service?.detail_lines?.slice(0, 2).join(" · ") ||
+                              "install, build and serve the files the team wrote"}
+                          </span>
+                        </div>
+                        <button onClick={() => void approveAll()} disabled={serviceBusy || shareBusy}>
+                          {serviceBusy ? "Approving…" : "Approve all"}
+                        </button>
+                      </div>
+                    )}
                     <div className="pv-bar">
                       <span className={`pv-state is-${service?.state ?? "idle"}`}>
                         {service ? service.state : running ? "writing files" : "not running"}
@@ -738,14 +1135,15 @@ export default function Build() {
                       <div>
                         {serviceState === "needs_approval" ? (
                           <button
-                            className="pv-btn"
+                            className="pv-btn is-approve"
+                            disabled={serviceBusy}
                             onClick={() => {
                               localStorage.setItem(approvedKey(runId), "1");
                               void boot(runId, false, true);
                             }}
                             title={`Install and build code the team wrote: ${service?.pending?.join(", ") ?? ""}`}
                           >
-                            <Icon name="check" size={11} /> Approve &amp; run
+                            <Icon name="check" size={11} /> {serviceBusy ? "Approving…" : "Approve & run"}
                           </button>
                         ) : serviceState && SERVICE_BUSY.includes(serviceState) ? (
                           <button
@@ -761,7 +1159,7 @@ export default function Build() {
                         ) : (
                           <button
                             className="pv-btn"
-                            disabled={running}
+                            disabled={running || serviceBusy}
                             onClick={() => void boot(runId, serviceState === "ready")}
                             title={
                               running
@@ -772,7 +1170,13 @@ export default function Build() {
                             }
                           >
                             <Icon name="send" size={11} />{" "}
-                            {running ? "Writing files…" : serviceState === "ready" ? "Restart" : "Run"}
+                            {running
+                              ? "Writing files…"
+                              : serviceBusy
+                                ? "Starting…"
+                                : serviceState === "ready"
+                                  ? "Restart"
+                                  : "Run"}
                           </button>
                         )}
                         <button
@@ -783,6 +1187,19 @@ export default function Build() {
                         >
                           <Icon name="eye" size={11} /> {browserBusy ? "Checking…" : "Browser"}
                         </button>
+                        {service?.browser && !service.browser.ok && !running && (
+                          <button
+                            className="pv-btn"
+                            onClick={() =>
+                              void resumeRun(runId)
+                                .then(() => window.location.reload())
+                                .catch(() => setNotice("Could not start the repair run."))
+                            }
+                            title="Send the browser findings back to the authors and repair them"
+                          >
+                            <Icon name="check" size={11} /> Repair live issues
+                          </button>
+                        )}
                         {!service?.remote && (
                           <>
                             {share?.state === "ready" && share.url ? (
@@ -1048,9 +1465,15 @@ export default function Build() {
 
       <footer className="bld-compose">
         <div className="bld-depth">
-          {(["quick", "deep"] as Depth[]).map((key) => (
+          {(
+            [
+              ["quick", "Quick"],
+              ["deep", "Full crew"],
+              ["ultra", "Ultra"],
+            ] as [Depth, string][]
+          ).map(([key, label]) => (
             <button key={key} className={depth === key ? "is-active" : ""} onClick={() => setDepth(key)}>
-              {key === "quick" ? "Quick" : "Full crew"}
+              {label}
             </button>
           ))}
         </div>
@@ -1076,15 +1499,60 @@ export default function Build() {
         )}
       </footer>
 
+      {paletteOpen && (
+        <div className="cmdk-scrim" onClick={() => setPaletteOpen(false)}>
+          <div className="cmdk" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+            <header>
+              <Icon name="search" size={15} />
+              <input
+                autoFocus
+                value={paletteQuery}
+                onChange={(event) => setPaletteQuery(event.target.value)}
+                placeholder="Search actions…"
+              />
+              <kbd>esc</kbd>
+            </header>
+            <div className="cmdk-list">
+              {visibleCommands.map((command) => (
+                <button
+                  key={command.id}
+                  disabled={command.disabled}
+                  onClick={() => {
+                    setPaletteOpen(false);
+                    command.run();
+                  }}
+                >
+                  <span>{command.label}</span>
+                  {command.hint && <kbd>{command.hint}</kbd>}
+                </button>
+              ))}
+              {visibleCommands.length === 0 && <p>No action matches that search.</p>}
+            </div>
+            <footer>
+              <span>
+                <kbd>⌘K</kbd> toggle
+              </span>
+              <span>
+                <kbd>⇧⌘A</kbd> approve all
+              </span>
+            </footer>
+          </div>
+        </div>
+      )}
+
       {(error || notice) && (
         <div className={`bld-toast${error ? " is-error" : ""}`}>
           <Icon name={error ? "alert" : "check"} size={14} />
           <span>{error ?? notice}</span>
-          {error && (
-            <button onClick={() => setError(null)}>
-              <Icon name="plus" size={12} />
-            </button>
-          )}
+          <button
+            onClick={() => {
+              setError(null);
+              setNotice(null);
+            }}
+            aria-label="Dismiss"
+          >
+            <Icon name="plus" size={12} />
+          </button>
         </div>
       )}
     </div>

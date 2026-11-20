@@ -17,6 +17,8 @@ belong here. The component column is the part of the harness that owned the fail
 | 2026-11-20 | `164f513cdb0d` | wiring | the preview was blank after a clean `vite build`: absolute `/assets/...` URLs 404 under the per-run token prefix | `vite.config.ts` |
 | 2026-11-20 | `164f513cdb0d` | wiring | the reviewer found truncated JSX that the structural verifier called clean; the tool loop spent 8 steps and the standard rewrite fixed it | `nodes/verify.py` |
 | 2026-11-20 | `eca0542ddaf1` | unknown | ValueError: '/private/tmp/cortex-quality-run/runs/eca0542ddaf1/src/main.tsx' is not in the subpath of '/tmp/cortex-quality-run/runs/eca0542ddaf1' OR one path is relative and the ot | — |
+| 2026-11-20 | `9cfd515c54ea` | cancelled | cancelled | — |
+| 2026-11-20 | `201c46c9795f` | cancelled | cancelled | — |
 
 ## What changed
 

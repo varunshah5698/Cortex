@@ -67,7 +67,7 @@ class Harness:
             raise HarnessBusy("a resumed run needs at least one configured specialist")
         self._room()
         run.specialists = specialists
-        run.depth = depth if depth in ("off", "brief", "deep", "quick") else run.depth
+        run.depth = depth if depth in ("off", "brief", "deep", "ultra", "quick") else run.depth
         run.done = False
         run.events = [event for event in run.events if event.get("type") not in ("done", "error")]
         return self._submit(run, lambda: Orchestrator(run).resume_all())
@@ -80,7 +80,7 @@ class Harness:
             run_id=uuid.uuid4().hex[:12],
             prompt=prompt[:400],
             specialists=[specialist],
-            depth=depth if depth in ("off", "brief", "deep") else "brief",
+            depth=depth if depth in ("off", "brief", "deep", "ultra") else "brief",
             kind="chat",
         )
         return self._submit(run, lambda: chat_task(run, specialist, messages, run.depth))

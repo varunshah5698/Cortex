@@ -3,7 +3,7 @@ import { API, PREVIEW, ensureRoster, type Specialist } from "./providers";
 /** Python harness — src/ai_harness/main.py. Lives in `providers` with the roster wire. */
 export { API, PREVIEW };
 
-export type Depth = "quick" | "deep";
+export type Depth = "quick" | "deep" | "ultra";
 
 export type PlanUnit = {
   id: string;
@@ -153,6 +153,19 @@ export type HarnessEvent =
     }
   | { type: "stream_lost" }
   | { type: "error"; message: string; agent?: string };
+
+export async function resumeRun(runId: string): Promise<string> {
+  const res = await fetch(`${API}/api/run/${runId}/resume`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(detail.slice(0, 250) || `Harness responded ${res.status}`);
+  }
+  return ((await res.json()) as { run_id: string }).run_id;
+}
 
 export async function startRun(prompt: string, specialists: Specialist[], depth: Depth): Promise<string> {
   await ensureRoster(specialists);
@@ -312,7 +325,13 @@ export type RunService = {
   logs: string[];
 };
 
-const service = async (res: Response): Promise<RunService> => (await res.json()) as RunService;
+const service = async (res: Response): Promise<RunService> => {
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { detail?: string };
+    throw new Error(body.detail || `the harness answered ${res.status}`);
+  }
+  return (await res.json()) as RunService;
+};
 
 /**
  * Start the service. `restart` stops the running one and installs/builds/serves again.
@@ -358,12 +377,20 @@ export async function startShare(runId: string, approve = false): Promise<RunSha
   return (await res.json()) as RunShare;
 }
 
+const share = async (res: Response): Promise<RunShare> => {
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { detail?: string };
+    throw new Error(body.detail || `share failed (${res.status})`);
+  }
+  return (await res.json()) as RunShare;
+};
+
 export async function stopShare(runId: string): Promise<RunShare> {
-  return (await (await fetch(`${API}/api/run/${runId}/share/stop`, { method: "POST" })).json()) as RunShare;
+  return share(await fetch(`${API}/api/run/${runId}/share/stop`, { method: "POST" }));
 }
 
 export async function shareStatus(runId: string): Promise<RunShare> {
-  return (await (await fetch(`${API}/api/run/${runId}/share`)).json()) as RunShare;
+  return share(await fetch(`${API}/api/run/${runId}/share`));
 }
 
 /** Open the served page in Chrome: console errors, failed requests, one click. */

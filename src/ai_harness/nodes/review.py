@@ -7,11 +7,25 @@ import posixpath
 import re
 
 from ..agents import executor, reviewer
-from ..config.settings import AGENT_LOOP
+from ..config.settings import AGENT_LOOP, AGENT_STEPS
 from ..core.state import RunState
 from ..models import Specialist, WorkUnit
 from ..modules import agent_loop, context, llm, progress, prompts, thrash
 from ..nodes import execution, verify
+
+
+def _browser_findings(run: RunState) -> str:
+    report = getattr(run, "browser", None) or {}
+    issues = [item for item in report.get("issues") or [] if isinstance(item, dict)]
+    if not issues:
+        return ""
+    lines = ["BROWSER CHECK (a real Chrome drove the served page):"]
+    for item in issues[:12]:
+        lines.append(
+            f"- [{item.get('level', 'error')}] {item.get('file', 'page')} · {item.get('code', 'browser')}: {item.get('detail', '')}"
+        )
+    lines.append("These are observed in the running app. Fix the page before calling it done.")
+    return "\n".join(lines)
 
 
 async def run(run: RunState, agent: Specialist, units: list[WorkUnit]) -> str:
@@ -22,9 +36,14 @@ async def run(run: RunState, agent: Specialist, units: list[WorkUnit]) -> str:
 
     # A deterministic sensor first: facts the reviewer must not be able to miss.
     checks = await verify.run(run, "post-build")
+    browser = _browser_findings(run)
     try:
         findings, usage = await reviewer.review(
-            agent, run.prompt, run.files, think, evidence=verify.as_findings(checks)
+            agent,
+            run.prompt,
+            run.files,
+            think,
+            evidence="\n\n".join(text for text in (verify.as_findings(checks), browser) if text),
         )
     except llm.ProviderError as exc:
         await run.emit({"type": "error", "message": str(exc), "agent": agent.id})
@@ -54,8 +73,10 @@ async def run(run: RunState, agent: Specialist, units: list[WorkUnit]) -> str:
     # The reviewer writes prose; the verifier writes facts. A rewrite must obey both, so
     # the deterministic issues are quoted verbatim and their files are always targeted —
     # otherwise a vague review "fix" leaves the real defect in place.
-    if checks["issues"]:
-        findings = (findings.rstrip() + "\n\n" + verify.as_findings(checks)).strip()
+    if checks["issues"] or browser:
+        findings = "\n\n".join(
+            text for text in (findings.rstrip(), verify.as_findings(checks), browser) if text
+        ).strip()
     failing = {item["file"] for item in checks.get("issues", [])}
     targets = [u for u in units if u.file in failing] + [u for u in units if u.file.lower() in findings.lower()]
     flagged = list({u.id: u for u in targets}.values())[:2] or units[:1]
@@ -284,6 +305,7 @@ async def _agent_repair(run: RunState, targets: list[WorkUnit], findings: str) -
                 unit.file,
                 findings,
                 lambda: verify.run(run, "agent-check"),
+                max_steps=AGENT_STEPS * 2 if getattr(run, "depth", "") == "ultra" else AGENT_STEPS,
             )
         except llm.ProviderError as exc:
             await run.emit({"type": "error", "agent": author.id, "message": str(exc)})
@@ -380,6 +402,7 @@ async def revise(
                 unit.file,
                 findings,
                 lambda: verify.run(run, "agent-check"),
+                max_steps=AGENT_STEPS * 2 if getattr(run, "depth", "") == "ultra" else AGENT_STEPS,
             )
         except llm.ProviderError as exc:
             await run.emit({"type": "error", "message": str(exc), "agent": author.id})
