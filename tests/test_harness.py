@@ -55,6 +55,18 @@ def test_scaffold_creates_empty_files(tmp_path: Path) -> None:
         assert target.exists() and target.read_text() == ""
 
 
+def test_a_symlinked_workspace_still_scaffolds(tmp_path: Path) -> None:
+    """`/tmp` is a symlink on macOS; resolved targets must stay relative to the root."""
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+
+    fm = FileManager(link)
+    assert fm.scaffold(["src/main.tsx"]) == ["src/main.tsx"]
+    assert (real / "src/main.tsx").exists()
+
+
 def test_write_and_read_round_trip(tmp_path: Path) -> None:
     fm = FileManager(tmp_path)
     lines = fm.write("src/app.js", "const a = 1;\nconst b = 2;\n")

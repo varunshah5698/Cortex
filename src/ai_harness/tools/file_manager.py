@@ -12,7 +12,9 @@ class FileManager:
     """Every write goes through here. The sandbox is the run workspace."""
 
     def __init__(self, workspace: Path):
-        self.workspace = workspace
+        # Resolve once: `/tmp` is a symlink to `/private/tmp` on macOS, and a resolved
+        # target cannot be made relative to an unresolved root.
+        self.workspace = workspace.resolve()
         self.workspace.mkdir(parents=True, exist_ok=True)
 
     def scaffold(self, paths: list[str]) -> list[str]:
