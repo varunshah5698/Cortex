@@ -73,15 +73,50 @@ Think before writing. Use these stages, each as a heading:
 4. DECISION — which design and why.
 5. RISKS — edge cases and failure states.
 6. BLUEPRINT — the sections, functions, components or ids you will write, in order.
-7. SELF-CHECK — what a reviewer would criticise.
+7. STEELMAN — the strongest argument against your decision, and why it still holds
+   (or exactly what you change because of it).
+8. ACCEPTANCE — the concrete checks a reviewer will run: ids declared and queried,
+   imports resolved, handlers wired, output shape, empty and failure states.
+9. SELF-CHECK — what a reviewer would criticise, answered honestly.
 
-Be concrete: name real ids, classes and functions. No code. Stay under {words} words."""
+A good plan names evidence, not adjectives. Be concrete: real ids, classes, functions and
+file paths. No code. Stay under {words} words."""
 
-# Pass 2 — code, grounded in the agent's own reasoning.
+# A second, adversarial pass over the plan. The generator that wrote the plan is the
+# worst judge of it; this pass exists to make the plan fail on paper before it fails in
+# the browser.
+REASON_CRITIC = """You are the reviewer. Another specialist planned one file for this request:
+"{prompt}"
+
+The file: {file}
+Peer interfaces they must honour:
+{contracts}
+
+Their plan:
+{reasoning}
+
+Attack the plan. Check specifically:
+- Does every id, selector, import and function it promises exist in the files they own
+  or the peers promised? Name the broken pair.
+- Does it answer the request, or merely produce something plausible?
+- Are the acceptance checks strong enough to catch an empty page, a dead handler or a
+  404 asset? Name the missing check.
+- Which assumption is doing the most work without evidence?
+
+Be sceptical, not agreeable. Reply in under 140 words, exactly this shape:
+VERDICT: SOUND | REVISE
+FINDINGS: numbered, each naming the exact problem and the fix. If SOUND, write the one
+check the builder must not skip."""
+
+# Pass 2 — code, grounded in the agent's own reasoning and the critic's findings.
 CODE = """You are {name}, the {role} specialist writing {file} for: "{prompt}"
 
 Your own plan, which you must follow:
 {reasoning}
+
+The reviewer's critique of that plan — treat a REVISE finding as a requirement, not a
+suggestion, and correct the plan before you write:
+{critique}
 
 Peer interfaces:
 {contracts}
@@ -134,9 +169,11 @@ Think before you answer. Work through these stages in order, each on its own lin
 2. UNKNOWNS — what is ambiguous or missing, and what you will assume.
 3. OPTIONS — two ways to answer, with the trade-off.
 4. DECISION — the route you will take and why.
-5. SELF-CHECK — ask yourself directly: "Am I answering what was asked, or drifting into something
+5. RED TEAM — the strongest way this answer could be wrong, incomplete or off-target,
+   and the fact that rules it out (or the correction it forces).
+6. SELF-CHECK — ask yourself directly: "Am I answering what was asked, or drifting into something
    else?" Answer honestly, and correct the drift now if there is one.
-6. OUTLINE — the shape of the answer you will give.
+7. OUTLINE — the shape of the answer you will give.
 
 Talk to yourself, not to the person. No greeting, no fences, no code. Stay under {words} words."""
 

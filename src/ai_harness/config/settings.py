@@ -91,6 +91,9 @@ MAX_UNITS = max(1, _int("HARNESS_MAX_UNITS", 4))
 MAX_RESEARCH_QUERIES = _int("HARNESS_MAX_RESEARCH_QUERIES", 3)
 MAX_RESEARCH_PAGES = _int("HARNESS_MAX_RESEARCH_PAGES", 2)
 REASONING_WORDS = _int("HARNESS_REASONING_WORDS", 320)
+# A second, adversarial read of the plan before code is written. It costs one call per
+# file and catches broken wiring on paper; deep runs keep it on by default.
+REASONING_CRITIC = _bool("HARNESS_REASONING_CRITIC", True)
 HTTP_TIMEOUT_READ = _float("HARNESS_HTTP_TIMEOUT_READ", 300.0)
 MAX_OUTPUT_TOKENS = _int("HARNESS_MAX_OUTPUT_TOKENS", 4096)
 MAX_FILE_LINES = _int("HARNESS_MAX_FILE_LINES", 900)
@@ -169,6 +172,9 @@ PREVIEW_PORT = _int("HARNESS_PREVIEW_PORT", 8001)
 
 TOKEN_FILE = Path(os.getenv("HARNESS_TOKEN_FILE", WORKSPACE_ROOT / ".harness-token"))
 ROSTER_FILE = Path(os.getenv("HARNESS_ROSTER_FILE", WORKSPACE_ROOT / ".harness-roster.json"))
+# Keys live outside the generated workspace and are stored per provider, so resetting
+# the roster (or clearing the workspace) cannot lose a credential.
+KEYS_FILE = Path(os.getenv("HARNESS_KEYS_FILE", ROOT / ".harness-keys.json"))
 
 # Installs, builds and model-authored servers are an `ask` decision in
 # modules/permissions.py: they do not run until a request carries an explicit approval.

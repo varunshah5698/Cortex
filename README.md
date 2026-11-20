@@ -95,7 +95,8 @@ then emits a terminal `error` instead of `done`.
 ### Keys and the API surface
 
 The browser never holds a provider key. A key typed in the workshop goes once to
-`PUT /api/roster`, is stored in a `0600` file (`HARNESS_ROSTER_FILE`), is merged into the
+`PUT /api/roster`, is stored in a `0600` keyring (`HARNESS_KEYS_FILE`) keyed by provider
+endpoint, is merged into the
 specialist when a run starts, and is never returned — `GET /api/roster` reports
 `has_key`. Keys written to `localStorage` by earlier builds are dropped on load. To keep
 keys out of the browser entirely, set `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,

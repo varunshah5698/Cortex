@@ -15,7 +15,9 @@ harness runs the loop; the React UI shows the room.
   server's event contract — change an event, change it there too.
 - `tests/` pytest files, one per area, no network and no provider
 - `docs/architecture.md` the pipeline, event contract and guarantees; read it before
-  changing a node. `docs/tool-inventory.md` the blast radius of each capability.
+  changing a node. `docs/harness.md` the harness contract — the five components, the
+  reasoning loop and the known gaps. `docs/tool-inventory.md` the blast radius of each
+  capability.
 - `scripts/` `verify.sh` (the one check), `setup.sh` (install), `build_overview.py`
 - `workspace/runs/<id>/`, `dist/`, `evals/results/` generated — never edited by hand
 

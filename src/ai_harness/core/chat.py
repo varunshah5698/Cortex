@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 
+from ..config.settings import REASONING_WORDS
 from ..core.state import RunState, now_iso
 from ..models import Specialist
 from ..modules import llm, prompts, runtime
@@ -162,7 +163,7 @@ async def run_chat(
                     "content": prompts.CHAT_REASON.format(
                         name=specialist.name,
                         role=specialist.role,
-                        words=320 if depth == "deep" else 140,
+                        words=REASONING_WORDS if depth == "deep" else max(140, REASONING_WORDS // 2),
                     ),
                 },
                 *turns,

@@ -32,6 +32,7 @@ from . import paths, preview
 from .config.settings import (
     CACHE_ENABLED,
     DIST_DIR,
+    KEYS_FILE,
     MAX_RUN_TOKENS,
     MAX_RUN_USD,
     ORIGINS,
@@ -60,7 +61,7 @@ app.add_middleware(
 )
 
 harness = Harness()
-ROSTER = RosterStore(ROSTER_FILE)
+ROSTER = RosterStore(ROSTER_FILE, KEYS_FILE)
 
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 

@@ -110,6 +110,19 @@ async def reason(agent: Specialist, messages: list[dict[str, str]], on_think) ->
     return deliberation, stats.usage
 
 
+async def critique(agent: Specialist, messages: list[dict[str, str]], on_think) -> tuple[str, llm.Usage]:
+    """A sceptical second read of the plan, before any code is written.
+
+    It streams into the same visible reasoning channel: the person watching sees the
+    plan get attacked, and the code pass is grounded in what survived.
+    """
+    stats = llm.StreamStats()
+    async for _kind, text in llm.stream(agent, messages, think=True, stats=stats):
+        await on_think(text)
+    findings = "".join(stats.content).strip() or "".join(stats.thinking).strip()
+    return findings, stats.usage
+
+
 async def compose(
     agent: Specialist,
     messages: list[dict[str, str]],

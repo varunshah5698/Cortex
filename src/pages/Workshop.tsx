@@ -48,6 +48,7 @@ export default function Workshop() {
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
   const [notice, setNotice] = useState<string | null>(null);
   const [save, setSave] = useState<SaveState>("idle");
+  const [hydrated, setHydrated] = useState(false);
   const lastSaved = useRef("");
 
   useEffect(() => {
@@ -66,6 +67,11 @@ export default function Workshop() {
       })
       .catch(() => {
         /* harness offline: keep the local copy, and an edit will report the failure */
+      })
+      .finally(() => {
+        // Only a hydrated roster may be written back: a stale local copy pushed during
+        // the first render used to replace the harness's roster and its saved keys.
+        if (alive) setHydrated(true);
       });
     return () => {
       alive = false;
@@ -76,7 +82,7 @@ export default function Workshop() {
   // room resolves specialists by id — so an edit is saved as it is made, not only when
   // Launch is pressed.
   useEffect(() => {
-    if (!roster.length) return;
+    if (!hydrated || !roster.length) return;
     const payload = payloadOf(roster);
     if (payload === lastSaved.current) return;
     const timer = setTimeout(() => {
@@ -96,7 +102,7 @@ export default function Workshop() {
         });
     }, 900);
     return () => clearTimeout(timer);
-  }, [roster]);
+  }, [roster, hydrated]);
 
   const update = (id: string, patch: Partial<Specialist>) => {
     setRoster((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));

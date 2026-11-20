@@ -28,6 +28,7 @@ PROBES: tuple[tuple[str, str], ...] = (
     ("SYNTHESIS", "what the team built, who wrote which file"),
     ("RESEARCH_QUERY", "Turn this request into up to"),
     ("RESEARCH_SUMMARY", "Using only the sources below"),
+    ("REASON_CRITIC", "Attack the plan"),
     ("REASON", "Think before writing. Use these stages"),
     ("CODE", "Output format, exactly:"),
 )
@@ -93,6 +94,8 @@ class Scripted:
             return self.code_for(system)
         if kind == "REASON":
             return "restate: build this file. options: one. decision: the simple one."
+        if kind == "REASON_CRITIC":
+            return "VERDICT: SOUND\nFINDINGS: 1. Keep the ids in the markup and query only those."
         if kind == "REWRITE_REASON":
             return "accept: the finding. plan: rewrite against the real ids."
         if kind == "RESEARCH_QUERY":

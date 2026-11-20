@@ -21,7 +21,7 @@ from pathlib import Path
 
 import ai_harness.core.state as state_mod
 
-from ..config.settings import ROOT, ROSTER_FILE
+from ..config.settings import KEYS_FILE, ROOT, ROSTER_FILE
 from ..core.orchestrator import Orchestrator
 from ..core.state import RunState
 from ..models import Specialist
@@ -52,7 +52,7 @@ def scripted_team() -> list[Specialist]:
 
 def live_team() -> list[Specialist]:
     """The configured roster, with at least a planner and a reviewer."""
-    ready = [spec for spec in RosterStore(ROSTER_FILE).load() if spec.ready]
+    ready = [spec for spec in RosterStore(ROSTER_FILE, KEYS_FILE).load() if spec.ready]
     if not ready:
         raise SystemExit(
             "no configured specialist in the roster — save keys in the workshop first, or run without --live"

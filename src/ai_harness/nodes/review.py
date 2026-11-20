@@ -340,6 +340,7 @@ async def revise(run: RunState, reviewer_agent: Specialist, unit: WorkUnit, find
                         file=unit.file,
                         prompt=run.prompt,
                         reasoning=deliberation or answered,
+                        critique=findings[:700],
                         contracts=run.contracts.get(author.id, ""),
                         progress=progress.orient(run),
                     ),

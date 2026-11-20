@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from ..agents import executor
+from ..config.settings import REASONING_CRITIC, REASONING_WORDS
 from ..core.state import RunState
 from ..models import Specialist, WorkUnit
 from ..modules import context, llm, progress, prompts, protected, thrash, tool_log
@@ -180,7 +181,7 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
                         prompt=run.prompt,
                         contracts=peers,
                         notes=research,
-                        words=320,
+                        words=REASONING_WORDS,
                     ),
                 },
                 {"role": "user", "content": f"Think through {unit.file} now."},
@@ -188,6 +189,34 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
             on_think=lambda text: run.emit({"type": "think", "agent": agent.id, "delta": text}),
         )
         await run.emit(run.track_usage(agent, "reasoning", think_usage))
+
+        # Pass 1.5 — a different specialist attacks the plan before any code exists.
+        # Separation is the point: the model that wrote the plan is its worst judge.
+        critique = ""
+        if run.depth == "deep" and REASONING_CRITIC:
+            critic = next(
+                (s for s in run.specialists if s.role == "reviewer" and s.id != agent.id),
+                agent,
+            )
+            await run.emit({"type": "status", "agent": critic.id, "status": "thinking"})
+            critique, critic_usage = await executor.critique(
+                critic,
+                [
+                    {
+                        "role": "system",
+                        "content": prompts.REASON_CRITIC.format(
+                            prompt=run.prompt,
+                            file=unit.file,
+                            contracts=peers,
+                            reasoning=context.clip(reasoning, 1100),
+                        ),
+                    },
+                    {"role": "user", "content": f"Attack the plan for {unit.file}."},
+                ],
+                on_think=lambda text: run.emit({"type": "think", "agent": critic.id, "delta": text}),
+            )
+            await run.emit(run.track_usage(critic, "critique", critic_usage))
+            await run.emit({"type": "status", "agent": critic.id, "status": "idle"})
 
         # Pass 2 — the file itself, written against the agent's own plan. The answer may
         # carry extra files behind <<<FILE path>>> markers; each lands on its own path.
@@ -203,6 +232,7 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
                         file=unit.file,
                         prompt=run.prompt,
                         reasoning=context.clip(reasoning, 700),
+                        critique=context.clip(critique, 700) or "(no reviewer pass for this run)",
                         contracts=peers,
                         progress=progress.orient(run),
                     ),
