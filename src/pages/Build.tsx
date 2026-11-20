@@ -14,6 +14,7 @@ import {
   liveUrl,
   previewUrl,
   resumeRun,
+  runExists,
   serviceStatus,
   shareStatus,
   startRun,
@@ -209,6 +210,27 @@ export default function Build() {
     runIdRef.current = runId;
     startedKey.current = null;
     autoBooted.current = null;
+  }, [runId]);
+
+  // A run id in localStorage can outlive the deployment or workspace that created it.
+  // The old UI kept showing the dead id and the preview iframe answered with raw JSON.
+  // Only a real 404 clears it; an offline/forbidden response leaves a valid run alone.
+  useEffect(() => {
+    if (!runId) return;
+    let alive = true;
+    runExists(runId)
+      .then((exists) => {
+        if (!alive || exists !== false) return;
+        localStorage.removeItem("cortex:lastRun");
+        setRunId(null);
+        setRunning(false);
+        setPhase("idle");
+        setNotice("That run is not on this harness. Start a new run or pick one from history.");
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
   }, [runId]);
 
   // The room follows the roster. Hydration lands after the first paint, so a specialist
@@ -1355,12 +1377,22 @@ export default function Build() {
                       foreign origin). Apps that rely on relative `fetch()` or localStorage
                       will not work here — that is the cost of running generated code.
                     */}
-                    <iframe
-                      key={frame}
-                      title="preview"
-                      sandbox="allow-scripts allow-forms allow-popups allow-modals"
-                      src={servedUrl(runId)}
-                    />
+                    {import.meta.env.PROD && !import.meta.env.VITE_PREVIEW_URL && !service?.remote ? (
+                      <div className="pv-empty">
+                        <Icon name="eye" size={22} />
+                        <p>
+                          Source previews run on the local preview origin. Use <b>Run</b> to publish this build
+                          instead.
+                        </p>
+                      </div>
+                    ) : (
+                      <iframe
+                        key={frame}
+                        title="preview"
+                        sandbox="allow-scripts allow-forms allow-popups allow-modals"
+                        src={servedUrl(runId)}
+                      />
+                    )}
                     {service && (
                       <div className="pv-log">
                         <header>

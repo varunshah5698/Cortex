@@ -407,6 +407,23 @@ export const SERVICE_BUSY: ServiceState[] = ["detecting", "installing", "buildin
 
 export type FileRow = { path: string; agent: string | null; lines: number; done?: boolean };
 
+/**
+ * Is this run still on the harness that is answering?
+ *
+ * `null` means "could not tell" (offline/forbidden), so a temporary network failure does
+ * not erase a valid local run. `false` is a real 404: the id belongs to an older
+ * deployment or another workspace and the UI must drop it.
+ */
+export async function runExists(runId: string): Promise<boolean | null> {
+  try {
+    const res = await fetch(`${API}/api/run/${runId}/files`);
+    if (res.status === 404) return false;
+    return res.ok ? true : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function loadFiles(runId: string): Promise<{ files: FileRow[] } | null> {
   try {
     const res = await fetch(`${API}/api/run/${runId}/files`);
