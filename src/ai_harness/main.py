@@ -61,7 +61,7 @@ from .config.settings import (
 from .core.harness import Harness, HarnessBusy
 from .core.state import RunState, now_iso
 from .models import Specialist
-from .modules import browser, budget, cloud, llm, permissions, probe, receipt, runner, vercel_runner
+from .modules import browser, budget, cloud, cloud_sync, llm, permissions, probe, receipt, runner, vercel_runner
 from .modules import cloud_runner as remote_runner
 from .modules.cache import CACHE
 from .modules.roster import RosterStore
@@ -472,6 +472,9 @@ async def health() -> dict:
         "runs": len(harness.runs),
         "auth": {"durable": AUTH_DURABLE},
         "cache": CACHE.stats() if CACHE_ENABLED else {"enabled": False},
+        # Whether runs are being mirrored to Convex. Reported as two facts, never the
+        # secret: a health endpoint is public and a secret in it is a leak.
+        "cloud": cloud_sync.status(),
         "queue": {
             "running": harness.occupying(),
             "queued": harness.pending(),
