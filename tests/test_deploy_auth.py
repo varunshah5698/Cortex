@@ -1,13 +1,12 @@
-"""The deployed-instance guard: public same-origin plus one Basic auth password.
+"""The deployed-instance guard: public same-origin, no Basic auth, token for scripts.
 
-A local checkout keeps the original loopback rules. Render adds a public origin, so the
-UI is same-origin with `/api` without being loopback, and a password keeps every other
-visitor out.
+The public Render site has no website password. A browser on the service's own origin
+may call `/api`; a foreign page is rejected, and a non-browser client must present
+`X-Harness-Token`. The login screen is gone, so the public UI is the only way in.
 """
 
 from __future__ import annotations
 
-import base64
 import sys
 from pathlib import Path
 
@@ -28,28 +27,13 @@ def test_public_origin_is_same_origin_when_the_host_matches(monkeypatch) -> None
     assert not main._origin_allowed("https://cortex.onrender.com", "evil.example")
 
 
-def test_basic_auth_blocks_everything_but_health(monkeypatch) -> None:
-    monkeypatch.setattr(main, "BASIC_AUTH", "secret")
+def test_public_site_is_not_basic_auth_gated() -> None:
     client = TestClient(main.app)
 
     assert client.get("/api/health").status_code == 200
     blocked = client.get("/api/runs")
-    assert blocked.status_code == 401
-    assert "Basic" in blocked.headers["www-authenticate"]
+    assert blocked.status_code == 403
+    assert "www-authenticate" not in blocked.headers
 
-    token = base64.b64encode(b"cortex:secret").decode()
-    headers = {"Authorization": f"Basic {token}", "X-Harness-Token": main.api_token()}
-    allowed = client.get("/api/runs", headers=headers)
+    allowed = client.get("/api/runs", headers={"X-Harness-Token": main.api_token()})
     assert allowed.status_code == 200, allowed.text
-
-    wrong = base64.b64encode(b"cortex:wrong").decode()
-    assert client.get("/api/runs", headers={**headers, "Authorization": f"Basic {wrong}"}).status_code == 401
-
-
-def test_basic_auth_accepts_a_bare_password_as_the_cortex_user(monkeypatch) -> None:
-    monkeypatch.setattr(main, "BASIC_AUTH", "only-a-password")
-    client = TestClient(main.app)
-    token = base64.b64encode(b"cortex:only-a-password").decode()
-
-    headers = {"Authorization": f"Basic {token}", "X-Harness-Token": main.api_token()}
-    assert client.get("/api/runs", headers=headers).status_code == 200
