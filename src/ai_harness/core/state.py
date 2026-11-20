@@ -57,6 +57,10 @@ class RunState:
         default_factory=lambda: Budget(max_tokens=MAX_RUN_TOKENS, max_usd=MAX_RUN_USD, max_calls=MAX_RUN_CALLS)
     )
     verification: dict | None = None
+    # The acceptance checklist the request produced (`modules/intent.py`). It is the only
+    # record of what the person actually asked for, so it lives on the run and every
+    # verification pass reads it — a resumed run keeps judging the same request.
+    acceptance: list[dict] = field(default_factory=list)
     # The verdict has two halves and `done` reports both. Verification read the files;
     # nothing installed or compiled them unless a preview did, so `previewed` stays False
     # on a run that was only verified, and `build` is None until something really built.

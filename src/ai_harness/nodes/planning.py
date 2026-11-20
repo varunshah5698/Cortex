@@ -6,10 +6,10 @@ import asyncio
 import json
 
 from ..agents import planner as planner_agent
-from ..config.settings import PLAN_SECONDS
+from ..config.settings import INTENT_CHECK, PLAN_SECONDS
 from ..core.state import RunState
 from ..models import Specialist, WorkUnit
-from ..modules import llm, memory, progress, prompts, tool_log
+from ..modules import intent, llm, memory, progress, prompts, tool_log
 
 PLAN_FILE = ".harness-plan.json"
 HARNESS_FILES = ("package.json", "index.html", "vite.config.ts", "tsconfig.json")
@@ -146,6 +146,32 @@ def assign(roster: list[Specialist], units: list[WorkUnit]) -> dict[str, Special
     return mapping
 
 
+def _one_owner_per_file(units: list[WorkUnit]) -> list[WorkUnit]:
+    """Collapse units that share a file into one unit, so a file has exactly one author.
+
+    The objectives are concatenated rather than picked from: each one is a thing the
+    person asked for, and dropping the loser's objective loses the requirement while
+    leaving the file looking finished.
+    """
+    kept: list[WorkUnit] = []
+    by_file: dict[str, WorkUnit] = {}
+    for unit in units:
+        path = (unit.file or "").strip()
+        if not path:
+            kept.append(unit)
+            continue
+        existing = by_file.get(path)
+        if existing is None:
+            by_file[path] = unit
+            kept.append(unit)
+            continue
+        if unit.objective and unit.objective not in existing.objective:
+            existing.objective = f"{existing.objective}\n{unit.objective}".strip()
+        if unit.title and unit.title not in existing.title:
+            existing.title = f"{existing.title} + {unit.title}"
+    return kept
+
+
 async def run(run: RunState, planner: Specialist) -> tuple[list[WorkUnit], list[str], list[str]]:
     await run.emit({"type": "phase", "phase": "planning"})
     await run.emit({"type": "status", "agent": planner.id, "status": "thinking"})
@@ -238,6 +264,40 @@ async def run(run: RunState, planner: Specialist) -> tuple[list[WorkUnit], list[
         harness_files["vite.config.ts"] = _vite_config()
         if entry.endswith(".tsx"):
             harness_files["tsconfig.json"] = _tsconfig()
+
+    # The acceptance checklist is extracted before a single file is written, because it is
+    # the only record of what the person asked for. A weak model cannot be trusted to
+    # enumerate its own requirements, so the harness derives them from the request itself
+    # and then holds every later pass to them.
+    run.acceptance = intent.extract(run.prompt) if INTENT_CHECK else []
+    if run.acceptance:
+        intent.write(run, run.acceptance)
+        named = ", ".join(item["label"] for item in run.acceptance[:6])
+        more = f" (+{len(run.acceptance) - 6} more)" if len(run.acceptance) > 6 else ""
+        await run.emit(
+            {
+                "type": "message",
+                "from": "harness",
+                "kind": "plan",
+                "text": f"Acceptance checklist: {len(run.acceptance)} named capability(ies) — {named}{more}.",
+            }
+        )
+        await run.emit(
+            {
+                "type": "acceptance",
+                "criteria": [
+                    {"id": item["id"], "kind": item["kind"], "label": item["label"], "hard": item["hard"]}
+                    for item in run.acceptance
+                ],
+            }
+        )
+
+    # Two units naming the same file means two agents writing it at once: the second
+    # write wins, the first author's work is silently lost, and the reviewer sees a
+    # file that only half matches its unit. A weak planner does this constantly
+    # ("hero markup" and "footer markup" both on index.html). Merge them into one unit
+    # with one owner, keeping every objective so no requirement is dropped.
+    units = _one_owner_per_file(units)
 
     mapping = assign(run.specialists, units)
     for unit in units:

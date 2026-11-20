@@ -34,7 +34,7 @@ import posixpath
 import re
 
 from ..core.state import RunState
-from ..modules import design, toolchain
+from ..modules import design, intent, toolchain
 
 ID_IN_HTML = re.compile(r"""\bid\s*=\s*["']([^"']+)["']""")
 REF_IN_HTML = re.compile(r"""\b(?:href|src)\s*=\s*["']([^"']+)["']""")
@@ -298,8 +298,13 @@ def _check_root_component(files: dict[str, dict], issues: list[dict]) -> None:
             )
 
 
-def check(files: dict[str, dict], declared: list[str] | None = None) -> dict:
-    """Read the written tree and report contradictions. No model, no network."""
+def check(files: dict[str, dict], declared: list[str] | None = None, criteria: list[dict] | None = None) -> dict:
+    """Read the written tree and report contradictions. No model, no network.
+
+    `criteria` is the acceptance checklist the request produced (`modules/intent.py`). It
+    is optional so a caller holding only a file map — a test, a replayed regression — still
+    gets every structural check; a run passes its own checklist and gets the intent tier.
+    """
     declared = list(declared or files.keys())
     names = _basenames(files)
     issues: list[dict] = []
@@ -428,6 +433,14 @@ def check(files: dict[str, dict], declared: list[str] | None = None) -> dict:
     for item in design.audit(files):
         _issue(issues, item["level"], item["code"], item["file"], item["detail"])
 
+    # Tier 1.6: was the thing that was asked for actually built? Every other tier asks
+    # whether the tree is consistent with itself; this one asks whether it is consistent
+    # with the request. It is the only check that can tell a well-made page from the page
+    # someone asked for, and the reason a weak model cannot quietly ship the wrong app.
+    if criteria:
+        for item in intent.check(files, criteria):
+            _issue(issues, item["level"], item["code"], item["file"], item["detail"])
+
     return _report(issues, len(declared))
 
 
@@ -464,7 +477,11 @@ def as_findings(report: dict) -> str:
 
 async def run(state: RunState, stage: str = "post-build") -> dict:
     declared = list(dict.fromkeys([*state.files.keys(), *(getattr(state, "planned_files", []) or [])]))
-    report = check(state.files, declared)
+    # The run's own acceptance checklist travels with the run, so every later pass — the
+    # agent loop's check, the repair round, the post-revision pass — judges the same
+    # request rather than silently dropping back to structure-only.
+    criteria = getattr(state, "acceptance", None) or []
+    report = check(state.files, declared, criteria)
     report["stage"] = stage
     # Tier 2: the artifact's own compiler, when the tree has one installed. It only adds
     # facts (a type error, an unparseable file), so it runs on every structural pass.
@@ -490,14 +507,24 @@ async def run(state: RunState, stage: str = "post-build") -> dict:
             "warnings": report["warnings"],
             "checked": report["checked"],
             "toolchain": report.get("toolchain"),
+            # Coverage is reported even when it produced no finding: "9 of 11 named
+            # capabilities present" is the number that tells an operator whether the
+            # build is the thing they asked for, and it is cheap to carry.
+            "acceptance": intent.summary(criteria) if criteria else None,
         }
     )
     verdict = "clean" if report["ok"] else f"{report['errors']} error(s)"
+    coverage = ""
+    if criteria:
+        stats = intent.coverage(state.files, criteria)
+        coverage = f" · intent {stats['found']}/{stats['criteria']} named"
     await state.emit(
         {
             "type": "message",
             "from": "verify",
-            "text": f"{stage} checks: {report['checked']} files, {verdict}, {report['warnings']} warning(s)",
+            "text": (
+                f"{stage} checks: {report['checked']} files, {verdict}, {report['warnings']} warning(s){coverage}"
+            ),
             "kind": "review",
         }
     )

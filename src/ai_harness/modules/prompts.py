@@ -173,6 +173,10 @@ Design contract — a page is judged as a designed artefact, not only as working
 CODE = """You are {name}, the {role} specialist writing {file} for: "{prompt}"
 That file's job in the build: {objective}
 
+The request names these capabilities. Every one must exist in the finished build; the
+harness checks each against the tree and reports the ones it cannot find:
+{acceptance}
+
 Your own plan, which you must follow:
 {reasoning}
 

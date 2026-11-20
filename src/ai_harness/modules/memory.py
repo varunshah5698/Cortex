@@ -59,6 +59,10 @@ LESSON_RULES = {
     "unloaded_script": "Load every script that drives the markup.",
     "not_html": "A page needs a real html/body document.",
     "browser": "The served page must mount, load its assets, and have no console error.",
+    "intent_unmet": "Build the capabilities the request names, not a page that merely runs.",
+    "intent_static": "An interactive request needs real controls and a script behind them.",
+    "intent_gap": "Every capability the request names must leave a trace in the tree.",
+    "intent_partial": "Cover the whole request; half of it is not a smaller version of it.",
 }
 
 

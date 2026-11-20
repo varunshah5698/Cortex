@@ -8,7 +8,7 @@ from ..agents import executor
 from ..config.settings import AGENT_STEPS, REASONING_CRITIC, REASONING_WORDS
 from ..core.state import RunState
 from ..models import Specialist, WorkUnit
-from ..modules import agent_loop, context, llm, memory, progress, prompts, protected, thrash, tool_log
+from ..modules import agent_loop, context, intent, llm, memory, progress, prompts, protected, thrash, tool_log
 from . import verify
 
 
@@ -264,6 +264,7 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
                         file=unit.file,
                         objective=unit.objective,
                         prompt=run.prompt,
+                        acceptance=intent.contract(getattr(run, "acceptance", None) or []),
                         reasoning=context.clip(reasoning, 1400 if run.depth == "ultra" else 700),
                         critique=context.clip(critique, 1600 if run.depth == "ultra" else 700)
                         or "(no reviewer pass for this run)",

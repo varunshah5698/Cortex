@@ -98,6 +98,19 @@ Generated pages run on a separate origin with no `/api`, under a per-run nonce.
    components. The instruction that stops these findings existing is
    `prompts.DESIGN_CONTRACT`, injected into every code pass.
 1. **Static**: Ruff lint and format, TypeScript types. Fast enough to run on every edit.
+
+1.5. **Design**: `modules/design.py` asks whether the page was *designed* or only *wired*.
+
+1.6. **Acceptance**: `modules/intent.py` asks the only question the person who asked
+   actually has — *is this the thing I asked for?* The request's named capabilities are
+   extracted into a checklist before any file is written, persisted beside the run as
+   `acceptance.md`, injected into every code prompt, and then checked against the written
+   tree for a trace of each. This is the tier that stops a weak model shipping a tidy,
+   well-tokenised page containing none of the requested features — the failure mode every
+   other tier passes. Errors are reserved for a build that ignores the request outright
+   (no named capability present, or an interactive request with no script and no control);
+   a single missing capability is a warning that names it, which is what the repair loop
+   acts on. `HARNESS_INTENT_CHECK=0` restores structure-only verification.
 2. **Tests and evals**: pytest (no network, no provider), the offline eval suite, the
    structural verifier over the generated tree, the stack's own compiler.
 3. **Live**: the runner starts the real service, `probe.py` fetches the page and follows
@@ -120,6 +133,13 @@ to make a run pass.
   interaction flows.
 - The planner produces files and work units, not a persisted feature list with pass/fail
   flags. The verifier checks structure; it cannot check product intent.
+- The acceptance tier (`modules/intent.py`) narrows that gap but does not close it. It
+  extracts capabilities from a lexicon of vocabulary, so a request phrased in words the
+  lexicon does not know yields no criteria and no findings — the sensor is silent rather
+  than wrong, which is the right failure, but it is still a miss. It tests for a *trace*
+  of a capability, not its correctness: a page that mentions "search" and does nothing
+  with it satisfies the criterion. Judging whether the search actually works stays with
+  the browser tier and the reviewer.
 - The design sensor reads CSS statically. It can prove a class is unstyled and that no
   breakpoint exists; it cannot see that the result is *ugly*, that the contrast is
   actually insufficient, or that the layout breaks at a width it never tested. Those stay
