@@ -267,6 +267,7 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
                         reasoning=context.clip(reasoning, 1400 if run.depth == "ultra" else 700),
                         critique=context.clip(critique, 1600 if run.depth == "ultra" else 700)
                         or "(no reviewer pass for this run)",
+                        design=prompts.DESIGN_CONTRACT,
                         contracts=peers,
                         peer_files=context.files_context(run.files, exclude=unit.file),
                         lessons=memory.lessons(),

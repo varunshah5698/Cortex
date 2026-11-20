@@ -1,10 +1,13 @@
 {
-  "updated": "2026-11-20T06:07:03.089600+00:00",
+  "updated": "2026-11-20T09:37:33.094774+00:00",
   "cases": {
     "counter-page": 5,
     "broken-wiring": 5,
     "react-tree": 5,
     "python-service": 5,
-    "missing-file": 5
+    "missing-file": 5,
+    "dead-stylesheet": 5,
+    "unstyled-page": 5,
+    "regression-761b7c2bb692": 4
   }
 }

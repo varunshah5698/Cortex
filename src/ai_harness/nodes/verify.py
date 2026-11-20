@@ -34,7 +34,7 @@ import posixpath
 import re
 
 from ..core.state import RunState
-from ..modules import toolchain
+from ..modules import design, toolchain
 
 ID_IN_HTML = re.compile(r"""\bid\s*=\s*["']([^"']+)["']""")
 REF_IN_HTML = re.compile(r"""\b(?:href|src)\s*=\s*["']([^"']+)["']""")
@@ -420,6 +420,13 @@ def check(files: dict[str, dict], declared: list[str] | None = None) -> dict:
     # structural checks rather than in the toolchain pass that needs a subprocess.
     for item in toolchain.syntax_issues(files):
         _issue(issues, "error", item["code"], item["file"], item["detail"])
+
+    # Tier 1.5: was the page designed, or only wired? Same evidence, a different question,
+    # and the only one that can tell a page from a document. Errors here mean the styling
+    # is decorative (a sheet nothing matches, a page with none); warnings mean it works and
+    # is under-designed, which is evidence for the reviewer rather than a failed run.
+    for item in design.audit(files):
+        _issue(issues, item["level"], item["code"], item["file"], item["detail"])
 
     return _report(issues, len(declared))
 

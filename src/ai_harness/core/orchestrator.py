@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import traceback
 
 from ..config.settings import REPAIR_ROUNDS
 from ..core.state import RunState, now_iso
 from ..models import Specialist, WorkUnit
-from ..modules import failures, llm, memory, progress, prompts, receipt, runtime
+from ..modules import cloud_sync, failures, llm, memory, progress, prompts, receipt, runtime
 from ..modules.budget import BudgetExceeded
 from ..nodes import execution, planning, research, review
 from ..utils.logger import event_log
@@ -83,6 +84,12 @@ class Orchestrator:
             receipt.write(self.run)
             memory.append(self.run, f"stopped short — {failed} verification error(s)")
             event_log(self.run.run_id, "verification-failed", errors=failed, issues=report.get("issues", [])[:12])
+            cloud_sync.finish(
+                self.run.run_id,
+                "blocked",
+                message=f"{failed} verification error(s) still fail after repair",
+                errors=failed,
+            )
             await self.run.emit(
                 {
                     "type": "error",
@@ -116,6 +123,12 @@ class Orchestrator:
             }
         )
         event_log(self.run.run_id, "done", files=len(self.run.files))
+        cloud_sync.finish(
+            self.run.run_id,
+            "done",
+            message=f"{len(self.run.files)} file(s) verified",
+            errors=0,
+        )
 
     async def run_all(self) -> None:
         # Bind this run for every nested call (see modules/runtime.py).
@@ -125,6 +138,9 @@ class Orchestrator:
         try:
             await self.run.emit({"type": "start", "prompt": self.run.prompt, "created": self.run.created})
             event_log(self.run.run_id, "start", prompt=self.run.prompt, depth=self.run.depth)
+            # Best-effort mirror: a Convex outage must not fail a run that is already
+            # executing on disk. See modules/cloud_sync.py.
+            cloud_sync.start(self.run.run_id, self.run.prompt, self.run.depth)
 
             # A local daemon that is not running cannot write a file; fail before the
             # planner spends three minutes discovering that. Then load the model once,
@@ -225,6 +241,10 @@ class Orchestrator:
             await self.run.emit({"type": "error", "message": f"Run stopped by its budget — {exc}"})
         except Exception as exc:  # noqa: BLE001 - any node failure must reach the UI
             self.persist_metrics()
+            # The traceback goes to the log, not the UI: a bare `ValueError: too many
+            # values to unpack` in a toast is unfindable, and the operator reading the
+            # room should not have to reproduce the run to learn which line raised it.
+            event_log(self.run.run_id, "traceback", error=traceback.format_exc()[-4000:])
             failures.record(self.run, self.run.verification, f"{type(exc).__name__}: {exc}")
             receipt.write(self.run)
             event_log(self.run.run_id, "error", error=f"{type(exc).__name__}: {exc}")

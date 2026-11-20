@@ -60,3 +60,10 @@ services:
           property: host
       - key: HARNESS_CLOUD_RUNNER_TOKEN
         sync: false
+      # Convex is the durable data layer (docs/convex.md): accounts, threads, runs and
+      # lessons. The site URL is public; the secret is not, so it stays out of the repo.
+      # Leave the secret unset and runs simply are not mirrored — the harness still works.
+      - key: CONVEX_SITE_URL
+        value: https://dynamic-jay-407.convex.site
+      - key: CONVEX_HARNESS_SECRET
+        sync: false

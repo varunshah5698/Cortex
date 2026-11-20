@@ -17,6 +17,7 @@ import {
 import { startRun } from "./lib/harness";
 import { hydrateRoster, loadRoster, loadSelected, saveSelected } from "./lib/providers";
 import { titleFor, useThreads } from "./lib/threads";
+import { appendMessage, createThread, recordRunStart } from "./lib/cloud";
 import { navigate } from "./lib/router";
 
 export default function App() {
@@ -119,6 +120,12 @@ export default function App() {
         setThreads((prev) => [thread, ...prev]);
         setActiveId(threadId);
         history = thread.messages;
+        // Mirror to Convex so the conversation survives this browser. Best-effort: a
+        // failed mirror leaves the local thread intact, which is the source of truth here.
+        void (async () => {
+          const cloudId = await createThread(thread.title);
+          if (cloudId) await appendMessage(cloudId, "user", content);
+        })();
       } else {
         patch(threadId, (t) => ({
           ...t,
@@ -244,6 +251,9 @@ export default function App() {
       try {
         const runId = await startRun(seed, roster, "deep");
         patchCard((card) => ({ ...card, runId }));
+        // The harness owns the run; this records it so it is readable after the process
+        // is gone. Fire-and-forget by design — see lib/cloud.ts.
+        void recordRunStart(runId, seed, "deep");
       } catch (err) {
         const text = err instanceof Error ? err.message : "Cortex did not start the run.";
         patchCard((card) => ({ ...card, status: "error", error: text }));
