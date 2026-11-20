@@ -1,5 +1,6 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internalMutation, query } from "./_generated/server";
+import { userFor } from "./auth";
 
 /**
  * Lessons: a verification failure that became a durable instruction.
@@ -11,17 +12,22 @@ import { mutation, query } from "./_generated/server";
  */
 
 export const recent = query({
-  args: { limit: v.optional(v.number()) },
+  args: { token: v.optional(v.string()), limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
-    return await ctx.db
+    // Lessons carry file paths and failure detail from real runs, so this is not public.
+    // A signed-out caller gets nothing rather than everyone's failures.
+    const user = await userFor(ctx, args.token);
+    if (!user) return [];
+    const rows = await ctx.db
       .query("lessons")
       .withIndex("by_created")
       .order("desc")
       .take(Math.min(args.limit ?? 20, 100));
+    return rows.filter((row) => !row.userId || row.userId === user._id);
   },
 });
 
-export const record = mutation({
+export const record = internalMutation({
   args: {
     text: v.string(),
     code: v.optional(v.string()),
@@ -45,7 +51,7 @@ export const record = mutation({
 });
 
 /** The harness's write path; see the note in `runs.ts` on why the secret is re-checked. */
-export const recordBySecret = mutation({
+export const recordBySecret = internalMutation({
   args: {
     secret: v.string(),
     text: v.string(),

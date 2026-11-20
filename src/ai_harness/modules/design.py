@@ -31,8 +31,25 @@ CLASS_SEL = re.compile(r"\.(-?[_a-zA-Z][\w-]*)")
 ID_SEL = re.compile(r"#(-?[_a-zA-Z][\w-]*)")
 TAG_SEL = re.compile(r"(?:^|[\s,>+~])([a-zA-Z][\w-]*)")
 TAG_IN_MARKUP = re.compile(r"<\s*([a-zA-Z][\w-]*)")
-CLASS_ATTR = re.compile(r"""\bclass\s*=\s*["']([^"']*)["']""")
-ID_ATTR = re.compile(r"""\bid\s*=\s*["']([^"']*)["']""")
+# HTML attribute names are case-insensitive and quotes are optional in practice, so a
+# `<main class=card>` or `<main CLASS="card">` must not read as an unstyled element. The
+# first pattern takes a quoted value, the second an unquoted one up to whitespace or `>`.
+CLASS_ATTR = re.compile(r"""\bclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"']+))""", re.I)
+ID_ATTR = re.compile(r"""\bid\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"']+))""", re.I)
+# A stylesheet the page loads from somewhere else. `verify.EXTERNAL` already treats these
+# as legitimate, so the design sensor must not call such a page unstyled.
+EXTERNAL_SHEET = re.compile(
+    r"""<link\b[^>]*\brel\s*=\s*["']?stylesheet["']?[^>]*\bhref\s*=\s*["']?(https?:)?//""",
+    re.I,
+)
+STYLE_BLOCK_BODY = re.compile(r"<style\b[^>]*>(.*?)</style>", re.I | re.S)
+# Mirrors `nodes/verify.EXTERNAL` and `verify.REF_IN_HTML`. Duplicated rather than imported
+# because a module must not depend on a node that depends on it.
+REF_IN_HTML = re.compile(r"""\b(?:href|src)\s*=\s*["']([^"']+)["']""")
+EXTERNAL = ("http://", "https://", "//", "data:", "mailto:", "#")
+# Quoted strings inside CSS: a `content: "{"` must not open a block, and a `.card` inside
+# a string must not count as a styled class.
+CSS_STRING = re.compile(r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'')
 STYLE_ATTR = re.compile(r"""\bstyle\s*=\s*["'][^"']+["']""")
 FONT_SIZE = re.compile(r"font-size\s*:\s*([^;}]+)")
 TOKEN = re.compile(r"--[\w-]+\s*:")
@@ -51,10 +68,15 @@ def _issue(level: str, code: str, file: str, detail: str) -> dict:
 
 
 def _selectors(css: str) -> list[str]:
-    """Every selector in the sheet, including the ones nested inside `@media`."""
+    """Every selector in the sheet, including the ones nested inside `@media`.
+
+    Quoted strings are blanked before the brace scan. Without that, `content: "{"` opens a
+    phantom block and `content: ".card"` invents a `.card` selector, which made a genuinely
+    dead sheet read as styled.
+    """
     found: list[str] = []
     buffer: list[str] = []
-    for char in COMMENT.sub("", css):
+    for char in CSS_STRING.sub('""', COMMENT.sub("", css)):
         if char == "{":
             selector = "".join(buffer).strip()
             if selector and not selector.startswith("@"):
@@ -81,22 +103,59 @@ def _styled(selectors: list[str]) -> tuple[set[str], set[str], set[str]]:
     ids: set[str] = set()
     tags: set[str] = set()
     for selector in selectors:
+        # `from`/`to` (keyframes) and `padding: 1rem; & .title` (SCSS) are not selectors.
+        if ";" in selector or selector.startswith(("@", "from", "to")):
+            continue
         classes |= set(CLASS_SEL.findall(selector))
         ids |= set(ID_SEL.findall(selector))
         tags |= {tag.lower() for tag in TAG_SEL.findall(selector)}
     return classes, ids, tags
 
 
+def _own_sheets(html: str, sheets: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """The sheets this page actually links, resolved against the tree.
+
+    Judging every page against every sheet in the run was wrong in both directions: a page
+    was blamed for a sheet it never loaded (and the repair loop then edited the good file),
+    while a page with one live and one dead sheet passed on the live one. A page is audited
+    against its own `<link>` targets, and falls back to the whole tree only when it links
+    nothing at all.
+    """
+    by_name = {path.rsplit("/", 1)[-1]: (path, body) for path, body in sheets}
+    linked: list[tuple[str, str]] = []
+    for href in REF_IN_HTML.findall(html):
+        target = href.strip().split("?")[0].split("#")[0]
+        if not target or target.lower().startswith(EXTERNAL):
+            continue
+        found = by_name.get(target.lstrip("./").rsplit("/", 1)[-1])
+        if found and found not in linked:
+            linked.append(found)
+    return linked or sheets
+
+
 def _audit_page(path: str, html: str, sheets: list[tuple[str, str]], framework: bool) -> list[dict]:
     issues: list[dict] = []
-    classes = {name for group in CLASS_ATTR.findall(html) for name in group.split() if name}
-    ids = set(ID_ATTR.findall(html))
+    classes = {
+        name
+        for match in CLASS_ATTR.finditer(html)
+        for group in match.groups()
+        if group
+        for name in group.split()
+        if name
+    }
+    ids = {group for match in ID_ATTR.finditer(html) for group in match.groups() if group}
     tags = {tag.lower() for tag in TAG_IN_MARKUP.findall(html)} - INERT_TAGS
     inline = bool(STYLE_ATTR.search(html))
-    style_block = bool(re.search(r"<style\b", html, re.I))
+    style_bodies = STYLE_BLOCK_BODY.findall(html)
+    style_block = bool(style_bodies)
+    external = bool(EXTERNAL_SHEET.search(html))
 
-    if not sheets:
-        if not style_block and not inline and not framework:
+    own = _own_sheets(html, sheets)
+
+    if not own and not style_block:
+        # An external sheet or a framework tree is styled somewhere this sensor cannot
+        # read. Saying "unstyled" there would be a guess, and a wrong one.
+        if not inline and not framework and not external:
             issues.append(
                 _issue(
                     "error",
@@ -108,8 +167,9 @@ def _audit_page(path: str, html: str, sheets: list[tuple[str, str]], framework: 
             )
         return issues
 
-    css = "\n".join(body for _, body in sheets)
-    sheet_path = sheets[0][0]
+    # The page's own sheets plus any inline <style> body: both style this markup.
+    css = "\n".join([body for _, body in own] + style_bodies)
+    sheet_path = own[0][0] if own else path
     selectors = _selectors(css)
     if not selectors:
         return issues  # an empty sheet is already an `empty` finding from verify
@@ -117,6 +177,12 @@ def _audit_page(path: str, html: str, sheets: list[tuple[str, str]], framework: 
     styled_classes, styled_ids, styled_tags = _styled(selectors)
     matches = (styled_classes & classes) | (styled_ids & ids) | (styled_tags & tags)
     if not matches:
+        # A framework tree legitimately ships components before the sheet that styles
+        # them, and its markup is generated at runtime — so "no selector matches this
+        # HTML" is not evidence of a dead sheet there. This is the exemption the module
+        # docstring promises, applied to the check that actually needed it.
+        if framework:
+            return issues
         issues.append(
             _issue(
                 "error",
@@ -141,13 +207,16 @@ def _audit_page(path: str, html: str, sheets: list[tuple[str, str]], framework: 
             )
         )
 
-    if "@media" not in css:
+    # The softer signals read the comment-stripped sheet: a `@media` or a token that only
+    # exists inside a comment is not a breakpoint or a token.
+    bare = CSS_STRING.sub('""', COMMENT.sub("", css))
+    if "@media" not in bare:
         issues.append(
             _issue(
                 "warn", "no_responsive", sheet_path, "no @media breakpoint — the layout cannot adapt to a narrow screen"
             )
         )
-    if not STATE.search(css):
+    if not STATE.search(bare):
         issues.append(
             _issue(
                 "warn",
@@ -156,7 +225,7 @@ def _audit_page(path: str, html: str, sheets: list[tuple[str, str]], framework: 
                 "no :hover, :focus or :active rule — every control looks inert",
             )
         )
-    if not TOKEN.search(css):
+    if not TOKEN.search(bare):
         issues.append(
             _issue(
                 "warn",
@@ -165,7 +234,7 @@ def _audit_page(path: str, html: str, sheets: list[tuple[str, str]], framework: 
                 "no custom properties — colour, spacing and type cannot be tuned from one place",
             )
         )
-    sizes = {value.strip().lower() for value in FONT_SIZE.findall(css)}
+    sizes = {value.strip().lower() for value in FONT_SIZE.findall(bare)}
     if len(sizes) < 3:
         issues.append(
             _issue(

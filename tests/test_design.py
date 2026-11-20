@@ -180,3 +180,112 @@ def test_design_warnings_alone_do_not_fail_verification():
 
     assert report["ok"] is True
     assert report["warnings"] > 0
+
+
+# ---------- regressions: false positives that would block a real run ----------
+#
+# Each of these was a real defect found by adversarial review. A sensor that fails a
+# correct page is worse than no sensor, because it teaches the model to fear the check.
+
+DESIGNED_SHEET = """:root{--ink:#111;--a:0.875rem;--b:1.5rem;--c:2.5rem}
+.card{padding:1rem}
+.card:hover{filter:brightness(1.1)}
+.card:focus-visible{outline:2px solid #111}
+@media (max-width:640px){.card{padding:.5rem}}
+"""
+
+
+def test_the_harness_own_react_scaffold_is_not_failed_by_a_component_sheet():
+    """The scaffold emits <div id="root">; a component-scoped sheet is the correct answer.
+
+    The framework exemption was applied to `unstyled_page` but not to `dead_stylesheet`,
+    so a correct React app failed the hard gate and could never reach `done`.
+    """
+    from ai_harness.nodes import planning
+
+    html = planning._index("src/main.tsx", "src/index.css")
+    files = _files(
+        **{
+            "index.html": html,
+            "src__index.css": DESIGNED_SHEET,
+            "src__main.tsx": 'import App from "./App";',
+            "src__App.tsx": "export default function App(){return <main className='card'>x</main>}",
+        }
+    )
+
+    assert design.audit(files) == []
+
+
+def test_a_style_block_plus_a_reset_sheet_is_styled():
+    page = (
+        '<html><head><link rel="stylesheet" href="reset.css"><style>'
+        + DESIGNED_SHEET
+        + '</style></head><body><main class="card">x</main></body></html>'
+    )
+    issues = design.audit(_files(**{"index.html": page, "reset.css": "*{box-sizing:border-box}"}))
+
+    assert "dead_stylesheet" not in _codes(issues)
+
+
+def test_a_page_is_audited_against_its_own_sheet_not_every_sheet():
+    """Blame the dead sheet, not the good one — the repair loop edits what it is told."""
+    a = '<html><head><link rel="stylesheet" href="a.css"></head><body><main class="card">a</main></body></html>'
+    b = '<html><head><link rel="stylesheet" href="b.css"></head><body><main class="card">b</main></body></html>'
+    files = _files(**{"a.html": a, "b.html": b, "a.css": ".card{padding:1rem}", "b.css": ".ghost{x:1}"})
+
+    dead = [item for item in design.audit(files) if item["code"] == "dead_stylesheet"]
+    assert dead and dead[0]["file"] == "b.css"
+
+
+def test_unquoted_and_uppercase_class_attributes_are_read():
+    for markup in ("<main class=card>x</main>", '<main CLASS="card">x</main>'):
+        page = f'<html><head><link rel="stylesheet" href="s.css"></head><body>{markup}</body></html>'
+        issues = design.audit(_files(**{"index.html": page, "s.css": ".card{padding:1rem}"}))
+        assert "dead_stylesheet" not in _codes(issues), markup
+
+
+def test_an_external_stylesheet_counts_as_styled():
+    page = (
+        '<html><head><link rel="stylesheet" '
+        'href="https://cdn.jsdelivr.net/npm/bootstrap/dist/css/bootstrap.min.css">'
+        '</head><body><main class="card">x</main></body></html>'
+    )
+
+    assert "unstyled_page" not in _codes(design.audit(_files(**{"index.html": page})))
+
+
+def test_a_brace_inside_a_css_string_cannot_rescue_a_dead_sheet():
+    """`content: ".card{"` used to invent a `.card` selector and pass a dead sheet."""
+    tricky = '.hero::after{content:".card{"}\n.pricing{display:grid}'
+    page = '<html><head><link rel="stylesheet" href="s.css"></head><body><main class="card">x</main></body></html>'
+    issues = design.audit(_files(**{"index.html": page, "s.css": tricky}))
+
+    assert "dead_stylesheet" in _codes(issues)
+
+
+def test_a_commented_out_breakpoint_is_not_a_breakpoint():
+    sheet = ".card{padding:1rem}\n/* @media (max-width:640px){.card{padding:.5rem}} */\n"
+    page = '<html><head><link rel="stylesheet" href="s.css"></head><body><main class="card">x</main></body></html>'
+    issues = design.audit(_files(**{"index.html": page, "s.css": sheet}))
+
+    assert "no_responsive" in _codes(issues)
+
+
+def test_a_bad_timeout_env_does_not_stop_the_harness_importing():
+    """The mirror may never break the process it only observes."""
+    import importlib
+    import os
+    import subprocess
+    import sys
+
+    env = {**os.environ, "CONVEX_SYNC_TIMEOUT": "not-a-number", "PYTHONPATH": "src"}
+    result = subprocess.run(
+        [sys.executable, "-c", "import ai_harness.main"],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(Path(__file__).resolve().parents[1]),
+    )
+
+    assert result.returncode == 0, result.stderr[-500:]
+    importlib.invalidate_caches()
