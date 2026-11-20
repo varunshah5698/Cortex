@@ -175,6 +175,41 @@ class AuthStore:
             raise AuthError("Email or password is incorrect.", 401)
         return self._session(row["id"])
 
+    def login_external(self, email: str, name: str = "") -> tuple[str, dict]:
+        """A session for an account vouched for by someone else (Google, via Convex).
+
+        The caller must have verified the identity with the provider first; this method
+        trusts its argument. It exists so a Google sign-in produces the same
+        `cortex_session` cookie a password login does — otherwise the person is signed in
+        to the data layer and 401 on every `/api` call.
+
+        A password account and a Google account with the same email are the same person,
+        so an existing row is reused rather than duplicated. The stored password hash is
+        left alone: this account now has two ways in, not a broken one.
+        """
+        email = (email or "").strip().lower()
+        if len(email) > 254 or not EMAIL.match(email):
+            raise AuthError("That account has no usable email address.", 401)
+
+        with self._conn() as db:
+            row = db.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+            if row is None:
+                user_id = uuid.uuid4().hex
+                # A random, never-revealed password: the column is NOT NULL, and a value
+                # nobody knows is a value nobody can log in with. Google is the only way in
+                # until the person sets one.
+                salt = os.urandom(16)
+                digest = self._hash(secrets.token_urlsafe(32), salt)
+                db.execute(
+                    "INSERT INTO users (id, name, email, password_hash, salt, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    (user_id, (name or "").strip()[:80] or email.split("@")[0], email, digest, salt, _now_iso()),
+                )
+            else:
+                user_id = row["id"]
+                if name and not (row["name"] or "").strip():
+                    db.execute("UPDATE users SET name = ? WHERE id = ?", (name.strip()[:80], user_id))
+        return self._session(user_id)
+
     def user_for_token(self, token: str | None) -> dict | None:
         if not token:
             return None

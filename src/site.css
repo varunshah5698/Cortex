@@ -1279,6 +1279,58 @@
   cursor: progress;
 }
 
+/* Google sign-in sits above the email form: it is the shorter path, and the divider
+   makes clear the form below is an alternative rather than a second step. */
+.google-btn {
+  width: 100%;
+  height: 48px;
+  border-radius: 11px;
+  background: #fff;
+  color: #171518;
+  font-size: 14px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border: 1px solid #e3dfe6;
+  box-shadow: 0 1px 2px rgba(23, 21, 24, 0.05);
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.google-btn:hover {
+  background: #faf9fb;
+  border-color: #cfc9d4;
+  box-shadow: 0 2px 6px rgba(23, 21, 24, 0.08);
+}
+
+.google-btn:focus-visible {
+  outline: 2px solid #171518;
+  outline-offset: 2px;
+}
+
+.google-btn:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 18px 0 16px;
+  font-size: 11px;
+  color: #a79fae;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: #e8e4ea;
+}
+
 .divider {
   display: flex;
   align-items: center;
