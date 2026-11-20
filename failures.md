@@ -20,6 +20,11 @@ belong here. The component column is the part of the harness that owned the fail
 | 2026-11-20 | `9cfd515c54ea` | cancelled | cancelled | — |
 | 2026-11-20 | `201c46c9795f` | cancelled | cancelled | — |
 | 2026-11-20 | `ffcd2d65ccf5` | cancelled | cancelled | — |
+| 2026-11-20 | `f6f6ef606ce8` | cancelled | cancelled | — |
+| 2026-11-20 | `e5a6bc692125` | cancelled | cancelled | — |
+| 2026-11-20 | `9b071fa4e727` | cancelled | cancelled | — |
+| 2026-11-20 | `22bd95b75e20` | cancelled | cancelled | — |
+| 2026-11-20 | `56139ed8e879` | unknown | ValueError: too many values to unpack (expected 2) | — |
 
 ## What changed
 

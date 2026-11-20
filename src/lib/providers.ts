@@ -248,7 +248,7 @@ export async function pushRoster(list: Specialist[], replace = true): Promise<Sp
       body: JSON.stringify({ specialists: list, replace }),
     });
   } catch {
-    throw new Error("The harness is not answering on 127.0.0.1:8000, so the roster was not saved.");
+    throw new Error("Cortex is not answering on 127.0.0.1:8000, so the roster was not saved.");
   }
   if (!res.ok) {
     const raw = await res.text().catch(() => "");

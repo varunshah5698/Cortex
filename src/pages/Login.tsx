@@ -1,6 +1,7 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Icon } from "../components/Icon";
 import { navigate } from "../lib/router";
+import { API } from "../lib/providers";
 import { login, signup, type User } from "../lib/auth";
 
 type Mode = "signin" | "signup";
@@ -21,6 +22,23 @@ export default function Login({ user, onAuth, onLogout }: Props) {
   const [show, setShow] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [durable, setDurable] = useState(true);
+
+  useEffect(() => {
+    fetch(`${API}/api/health`)
+      .then((res) => res.json())
+      .then((data: { auth?: { durable?: boolean } }) => setDurable(data.auth?.durable !== false))
+      .catch(() => {
+        /* health is a hint, not a gate */
+      });
+  }, []);
+
+  const persistenceNote = durable ? null : (
+    <p className="auth-warn" role="status">
+      Accounts and sessions reset when this instance restarts. Set <code>HARNESS_AUTH_DB</code> to a
+      persistent disk to keep them.
+    </p>
+  );
 
   const switchMode = (next: Mode) => {
     setMode(next);
@@ -93,6 +111,7 @@ export default function Login({ user, onAuth, onLogout }: Props) {
                 Sign out
               </button>
             </p>
+            {persistenceNote}
           </div>
         </div>
       </div>
@@ -143,7 +162,7 @@ export default function Login({ user, onAuth, onLogout }: Props) {
           <p className="auth-sub">
             {mode === "signup"
               ? "One account, your own way in. No demo credentials."
-              : "Sign in to open the harness workshop."}
+              : "Sign in to open the Cortex workshop."}
           </p>
 
           <div className="auth-switch" role="tablist" aria-label="Account access">
@@ -248,6 +267,7 @@ export default function Login({ user, onAuth, onLogout }: Props) {
               {mode === "signup" ? "Sign in" : "Create an account"}
             </button>
           </p>
+          {persistenceNote}
         </div>
       </div>
     </div>

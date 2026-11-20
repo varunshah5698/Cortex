@@ -1,5 +1,6 @@
 import { Icon } from "../components/Icon";
 import { navigate } from "../lib/router";
+import type { User } from "../lib/auth";
 
 const steps = [
   {
@@ -66,7 +67,7 @@ const mockTeam = [
   { name: "Lyra", role: "Reviewer", state: "wait" },
 ];
 
-export default function Landing() {
+export default function Landing({ user = null, onLogout }: { user?: User | null; onLogout?: () => void }) {
   const go = (route: "login" | "workshop" | "app" | "build") => () => navigate(route);
 
   return (
@@ -80,16 +81,27 @@ export default function Landing() {
             <span>Cortex</span>
           </a>
           <nav className="site-links">
-            <a href="#harness">Harness</a>
+            <a href="#harness">Preview</a>
             <a href="#workflow">Workflow</a>
             <a href="#models">Models</a>
             <button onClick={() => navigate("build")}>Build room</button>
             <a href="#faq">FAQ</a>
           </nav>
           <div className="site-actions">
-            <button className="link-btn" onClick={go("login")}>
-              Sign in
-            </button>
+            {user ? (
+              <>
+                <span className="link-btn" style={{ cursor: "default", opacity: 0.7 }}>
+                  {user.name || user.email}
+                </span>
+                <button className="link-btn" onClick={onLogout}>
+                  Sign out
+                </button>
+              </>
+            ) : (
+              <button className="link-btn" onClick={go("login")}>
+                Sign in
+              </button>
+            )}
             <button className="site-cta" onClick={go("workshop")}>
               Open workshop
               <Icon name="arrowRight" size={15} />
@@ -102,7 +114,7 @@ export default function Landing() {
         <div className="hero-glow" aria-hidden />
         <span className="eyebrow">
           <i className="dot" />
-          Chain of Command harness — v0.1
+          Chain of Command — v0.1
         </span>
         <h1>
           One prompt.
@@ -238,7 +250,7 @@ export default function Landing() {
           <span className="kicker">Bring your own models</span>
           <h2>Every role is a slot. Fill it with whatever you trust.</h2>
           <p>
-            Paste a base URL, a key and a model ID. Add four specialists or forty — the harness keeps their
+            Paste a base URL, a key and a model ID. Add four specialists or forty — Cortex keeps their
             permissions, context and budgets separate.
           </p>
         </div>
@@ -285,11 +297,11 @@ export default function Landing() {
               </span>
               Cortex
             </span>
-            <p>A topic-agnostic multi-agent harness with evidence-backed review.</p>
+            <p>A topic-agnostic multi-agent system with evidence-backed review.</p>
           </div>
           <div className="footer-cols">
             <div>
-              <h4>Harness</h4>
+              <h4>Cortex</h4>
               <a href="#workflow">Workflow</a>
               <a href="#models">Models</a>
               <a href="#harness">Live preview</a>
@@ -302,15 +314,21 @@ export default function Landing() {
             </div>
             <div>
               <h4>Workspace</h4>
-              <button className="footer-link" onClick={go("login")}>
-                Sign in
-              </button>
               <button className="footer-link" onClick={go("workshop")}>
                 Workshop
               </button>
               <button className="footer-link" onClick={go("build")}>
                 Build room
               </button>
+              {user ? (
+                <button className="footer-link" onClick={onLogout}>
+                  Sign out
+                </button>
+              ) : (
+                <button className="footer-link" onClick={go("login")}>
+                  Sign in
+                </button>
+              )}
             </div>
           </div>
         </div>

@@ -175,7 +175,7 @@ export default function App() {
       } catch (err) {
         const aborted = err instanceof DOMException && err.name === "AbortError";
         if (!aborted) {
-          setError(err instanceof Error ? err.message : "The harness did not answer.");
+          setError(err instanceof Error ? err.message : "Cortex did not answer.");
         }
         if (acc) {
           patch(threadId, (t) => ({
@@ -245,7 +245,7 @@ export default function App() {
         const runId = await startRun(seed, roster, "deep");
         patchCard((card) => ({ ...card, runId }));
       } catch (err) {
-        const text = err instanceof Error ? err.message : "The harness did not start the run.";
+        const text = err instanceof Error ? err.message : "Cortex did not start the run.";
         patchCard((card) => ({ ...card, status: "error", error: text }));
       }
     },
