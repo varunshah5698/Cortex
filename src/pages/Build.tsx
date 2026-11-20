@@ -225,7 +225,7 @@ export default function Build() {
         setRunId(null);
         setRunning(false);
         setPhase("idle");
-        setNotice("That run is not on this harness. Start a new run or pick one from history.");
+        setNotice("That run is not on this Cortex instance. Start a new run or pick one from history.");
       })
       .catch(() => {});
     return () => {
@@ -277,7 +277,7 @@ export default function Build() {
         if (seq === serviceSeq.current) {
           // Keep the last preview on screen: a failed restart is not a reason to erase
           // the page the operator was already looking at.
-          setError(err instanceof Error ? err.message : "The harness did not answer — is it running on :8000?");
+          setError(err instanceof Error ? err.message : "Cortex did not answer — is it running on :8000?");
         }
       } finally {
         if (seq === serviceSeq.current) setServiceBusy(false);
@@ -375,7 +375,9 @@ export default function Build() {
       setShare(await stopShare(id));
       setNotice("Public share stopped");
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Could not stop the share");
+      setError(
+        `Could not stop the share — ${err instanceof Error ? err.message : "Cortex did not answer"}.`,
+      );
     } finally {
       setShareBusy(false);
     }
@@ -707,7 +709,9 @@ export default function Build() {
   }, [notice]);
 
   const send = async () => {
-    if (!prompt.trim()) return;
+    // While a run is live the footer control is Stop, not Send. Typing a brief into a
+    // box whose only button stops the room read as "my prompt was never sent".
+    if (!prompt.trim() || running) return;
     // This page may have loaded before the harness answered; ask once more instead of
     // refusing to build for a specialist that is in fact configured.
     let team = ready;
@@ -737,18 +741,33 @@ export default function Build() {
     setShare(null);
     try {
       const id = await startRun(prompt.trim(), team, depth);
+      // The brief was accepted: an empty box is the receipt. On failure the text stays
+      // so the same click can retry without retyping the prompt.
+      setPrompt("");
       localStorage.setItem("cortex:lastRun", id);
       setService(null);
       setLogsOpen(false);
       setRunId(id);
     } catch (err) {
       setRunning(false);
-      setError(err instanceof Error ? err.message : "The harness did not answer. Is it running on :8000?");
+      setError(err instanceof Error ? err.message : "Cortex did not answer. Is it running on :8000?");
     }
   };
 
+  // One banner for a stop that did not go through. A failed stop used to be silent
+  // (and, before the 401 guard, could look like a sign-out).
+  const stopFailed = (what: string) => (err: unknown) =>
+    setError(`Could not ${what} — ${err instanceof Error ? err.message : "Cortex did not answer"}.`);
+
   const stop = async () => {
-    if (runId) await stopRun(runId);
+    if (runId) {
+      try {
+        await stopRun(runId);
+      } catch (err) {
+        stopFailed("stop the room")(err);
+        return;
+      }
+    }
     setRunning(false);
     setPhase("done");
   };
@@ -793,7 +812,10 @@ export default function Build() {
   const pendingCount = (serviceNeedsApproval ? 1 : 0) + (shareNeedsApproval ? 1 : 0);
   const phaseIndex = PIPELINE_STAGES.indexOf(phase as (typeof PIPELINE_STAGES)[number]);
   const doneUnits = units.filter((unit) => files.some((file) => file.path === unit.file && file.done)).length;
-  const progress = units.length ? Math.round((doneUnits / units.length) * 100) : phase === "done" ? 100 : 0;
+  // The bar sits above the stage list, so it counts stages, not files: a file-based
+  // number read as 0% while four stages were already green.
+  const progress =
+    phase === "done" ? 100 : phaseIndex < 0 ? 0 : Math.round((phaseIndex / (PIPELINE_STAGES.length - 1)) * 100);
   const planFiltered = units.filter((unit) => unit.file.toLowerCase().includes(planQuery.toLowerCase().trim()));
   const fileOptions = [...new Set([...scaffold, ...files.map((file) => file.path)])];
   const writingAgents = Object.values(agents).filter((agent) =>
@@ -817,7 +839,7 @@ export default function Build() {
     {
       id: "stop-preview",
       label: "Stop the preview",
-      run: () => runId && void stopService(runId).then(setService).catch(() => {}),
+      run: () => runId && void stopService(runId).then(setService).catch(stopFailed("stop the preview")),
       disabled: !runId || !serviceState || serviceState === "idle",
     },
     {
@@ -1106,6 +1128,24 @@ export default function Build() {
             </div>
           )}
 
+          {ready.length === 0 && (
+            <div className="bld-setup">
+              <Icon name="alert" size={14} />
+              <span>No specialist is ready. Add a provider key in the workshop, then come back.</span>
+              <button onClick={() => navigate("workshop")}>Open workshop</button>
+            </div>
+          )}
+
+          {ready.length > 0 &&
+            /^(?!127\.0\.0\.1$|localhost$)/.test(window.location.hostname) &&
+            ready.every((spec) => spec.kind === "ollama") && (
+              <div className="bld-setup is-warn">
+                <Icon name="alert" size={14} />
+                <span>The hosted site cannot reach a local Ollama. Point the team at a hosted provider.</span>
+                <button onClick={() => navigate("workshop")}>Open workshop</button>
+              </div>
+            )}
+
           <Office
             agents={views}
             active={selected ?? undefined}
@@ -1199,7 +1239,7 @@ export default function Build() {
           <div className="bld-pane">
             {tab === "preview" && (
               <div className="pv">
-                {runId ? (
+                {runId && (files.length > 0 || service || running || phase !== "idle") ? (
                   <>
                     {serviceNeedsApproval && (
                       <div className="pv-approval">
@@ -1239,7 +1279,7 @@ export default function Build() {
                             className="pv-btn"
                             onClick={() => {
                               localStorage.removeItem(approvedKey(runId));
-                              void stopService(runId).then(setService).catch(() => {});
+                              void stopService(runId).then(setService).catch(stopFailed("stop the preview"));
                             }}
                             title="Stop the server"
                           >
@@ -1578,7 +1618,10 @@ export default function Build() {
         </div>
         <textarea
           value={prompt}
-          placeholder="Tell the team what to build…"
+          disabled={running}
+          placeholder={
+            running ? "The room is running — stop it to send a new brief." : "Tell the team what to build…"
+          }
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {

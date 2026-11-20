@@ -85,6 +85,9 @@ RUNS_ROOT = WORKSPACE_ROOT / "runs"
 # Accounts, sessions and harness state live outside the generated workspace: a run can
 # rewrite its workspace, but a login, roster or token should survive that.
 AUTH_DB = Path(os.getenv("HARNESS_AUTH_DB", str(ROOT / ".harness-auth.db")))
+# A free Render instance has no persistent disk. `/var/tmp` is wiped on restart, so the
+# login page warns instead of pretending an account will still exist tomorrow.
+AUTH_DURABLE = not str(AUTH_DB).startswith("/var/tmp")
 LOGS_ROOT = ROOT / "logs"
 DIST_DIR = ROOT / "dist"
 
@@ -98,6 +101,14 @@ MAX_UNITS = max(0, _int("HARNESS_MAX_UNITS", 0))
 MAX_RESEARCH_QUERIES = _int("HARNESS_MAX_RESEARCH_QUERIES", 3)
 MAX_RESEARCH_PAGES = _int("HARNESS_MAX_RESEARCH_PAGES", 2)
 REASONING_WORDS = _int("HARNESS_REASONING_WORDS", 700)
+# A small model can ignore the word budget and stream forever, producing no file while
+# the room looks alive. The cap is a hard stop on the visible reasoning stream; the
+# compose pass then gets its turn.
+MAX_REASONING_CHARS = max(1000, _int("HARNESS_MAX_REASONING_CHARS", REASONING_WORDS * 6))
+# A planner that has not produced a plan by now is not going to. The node falls back to
+# the stack inferred from the request and starts the room writing, rather than leaving
+# the UI at "planning" forever.
+PLAN_SECONDS = max(15.0, _float("HARNESS_PLAN_SECONDS", 120.0))
 # A second, adversarial read of the plan before code is written. It costs one call per
 # file and catches broken wiring on paper; deep runs keep it on by default.
 REASONING_CRITIC = _bool("HARNESS_REASONING_CRITIC", True)
@@ -235,7 +246,12 @@ SHARE_TTL = _float("HARNESS_SHARE_TTL", 900.0)
 # token is server-to-server only; the browser receives the run's capability URL, never
 # this token. The URL and token are absent locally, so local builds are unaffected.
 RUNNER_MODE = os.getenv("HARNESS_RUNNER_MODE", "local").strip().lower()
-CLOUD_RUNNER_URL = os.getenv("HARNESS_CLOUD_RUNNER_URL", "").strip().rstrip("/")
+_cloud_runner_url = os.getenv("HARNESS_CLOUD_RUNNER_URL", "").strip().rstrip("/")
+# Render's `fromService` reference gives a hostname, not a URL. The runner is always
+# HTTPS on Render; a local URL already carries its scheme.
+if _cloud_runner_url and "://" not in _cloud_runner_url:
+    _cloud_runner_url = f"https://{_cloud_runner_url}"
+CLOUD_RUNNER_URL = _cloud_runner_url
 CLOUD_RUNNER_TOKEN = os.getenv("HARNESS_CLOUD_RUNNER_TOKEN", "").strip()
 CLOUD_RUNNER_TIMEOUT = max(10.0, _float("HARNESS_CLOUD_RUNNER_TIMEOUT", 120.0))
 

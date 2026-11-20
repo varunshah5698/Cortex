@@ -37,6 +37,7 @@ from .config.settings import (
     AGENT_LOOP,
     AGENT_STEPS,
     AUTH_DB,
+    AUTH_DURABLE,
     BROWSER_CHECK,
     CACHE_ENABLED,
     DIST_DIR,
@@ -469,6 +470,7 @@ async def health() -> dict:
     return {
         "ok": True,
         "runs": len(harness.runs),
+        "auth": {"durable": AUTH_DURABLE},
         "cache": CACHE.stats() if CACHE_ENABLED else {"enabled": False},
         "queue": {
             "running": harness.occupying(),
@@ -771,8 +773,8 @@ async def browser_check(run_id: str) -> dict:
     run = harness.get(run_id)
     if run is None:
         raise HTTPException(404, "unknown run")
-    service = runner.get(run_id)
-    if service is None or service.state != "ready":
+    service = runner.get(run_id) or _remote_runs.get(run_id) or _vercel_runs.get(run_id)
+    if service is None or service.state != "ready" or not getattr(service, "url", None):
         raise HTTPException(409, "the run is not serving; run the preview first")
     report = await _browser_record(run_id, run, service)
     return report or {"ok": False, "stage": "browser", "issues": [], "note": "the run is not ready"}

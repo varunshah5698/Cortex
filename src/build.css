@@ -1742,6 +1742,24 @@
     border-right: 0;
     border-bottom: 1px solid #e4dccd;
   }
+  .vault-head,
+  .mtx-head {
+    flex-basis: auto;
+    height: auto;
+    flex-wrap: wrap;
+    padding: 10px 12px;
+  }
+  .vault-tabs button {
+    white-space: nowrap;
+  }
+  .vault-actions {
+    margin-left: 0;
+    width: 100%;
+  }
+  .vault-actions select {
+    flex: 1;
+    max-width: none;
+  }
   .vault-view-head {
     flex-wrap: wrap;
   }
@@ -2457,6 +2475,11 @@
 @media (max-width: 860px) {
   .bld-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 300px; }
   .bld-panel { border-left: 0; border-top: 1px solid var(--line); }
+  /* The run id is long; it pushes Files and Runtime off the header on a phone.
+     The id is still in the room and the runtime panel. */
+  .bld-id,
+  .bld-run-pick { display: none; }
+  .bld-head { gap: 8px; padding: 0 12px; }
   /* Keep the file explorer reachable: below this width the room needs Files and
      Runtime more than the palette/rail/inspector toggles, which have other entry points. */
   .bld-head-actions { gap: 4px; }
@@ -2542,3 +2565,53 @@
   font-size: 10px;
 }
 .bld-run-pick:hover { border-color: #443a58; color: #fff; }
+
+/* Keep the whole 1000×660 office visible instead of slicing the coding/review zones. */
+.office-fit {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.bld-panel,
+.bld-pane,
+.pv {
+  min-width: 0;
+}
+
+.pv-bar,
+.pv-bar div {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+.bld-setup {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid rgba(143, 240, 201, 0.24);
+  border-radius: 11px;
+  background: rgba(143, 240, 201, 0.06);
+  color: #cfeee2;
+  font-size: 12px;
+}
+.bld-setup.is-warn {
+  border-color: rgba(242, 181, 68, 0.3);
+  background: rgba(242, 181, 68, 0.07);
+  color: #f3dfb7;
+}
+.bld-setup span { flex: 1; min-width: 0; }
+.bld-setup button {
+  flex: none;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}

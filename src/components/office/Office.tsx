@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 export type Zone = "planning" | "research" | "coding" | "review";
 export type AgentStatus =
@@ -281,9 +281,28 @@ export function Office({ agents, onPick, active }: { agents: AgentView[]; onPick
       return { agent, spot: seat(zone, used[zone] - 1) };
     });
   }, [agents]);
+  // The scene is 1000×660. Fit the largest copy of that exact rectangle inside the
+  // available room; otherwise `slice` crops the coding/review zones off a short room.
+  const fitRef = useRef<HTMLDivElement | null>(null);
+  const [fit, setFit] = useState<{ width: number; height: number } | null>(null);
+  useEffect(() => {
+    const host = fitRef.current;
+    if (!host) return;
+    const measure = () => {
+      const box = host.getBoundingClientRect();
+      const scale = Math.min(box.width / 1000, box.height / 660);
+      if (!Number.isFinite(scale) || scale <= 0) return;
+      setFit({ width: Math.floor(1000 * scale), height: Math.floor(660 * scale) });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, []);
 
   return (
-    <div className="office">
+    <div className="office-fit" ref={fitRef}>
+      <div className="office" style={fit ? { width: fit.width, height: fit.height, flex: "none" } : undefined}>
       <div className="office-rug" />
       <svg className="office-scene" viewBox="0 0 1000 660" preserveAspectRatio="xMidYMid slice">
         <rect x={0} y={0} width={1000} height={112} fill="#33243f" />
@@ -401,6 +420,7 @@ export function Office({ agents, onPick, active }: { agents: AgentView[]; onPick
           </button>
         );
       })}
+      </div>
     </div>
   );
 }

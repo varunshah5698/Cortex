@@ -25,10 +25,11 @@ the verified commands above, the conventions and the things they must not do.
 
 ### Deploy
 
-`render.yaml` deploys the UI and the harness as one Render web service. See
-`docs/deploy.md` for the Blueprint steps and the features that stay local
-(previews, sharing, browser checks). The site has real sign-up/sign-in; accounts live
-in `HARNESS_AUTH_DB` and need a Render disk to survive restarts.
+`render.yaml` deploys the UI and the harness as one Render web service, with a second
+`cortex-runner` service for published previews. See `docs/deploy.md` for the Blueprint
+steps and the features that stay local (source previews, browser checks). The site has
+real sign-up/sign-in; accounts live in `HARNESS_AUTH_DB` and need a Render disk to
+survive restarts.
 
 Open `http://127.0.0.1:5178/#/build`. Configure specialists first in the workshop
 (`#/setup`): each one is a provider, model and role. A key typed there is sent once to
