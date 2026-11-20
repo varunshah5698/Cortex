@@ -39,6 +39,7 @@ DENY_PATHS = (
     ".harness-token",
     ".harness-roster.json",
     ".harness-keys.json",
+    ".harness-auth.db",
     "secrets/*",
     "*.pem",
     "*.key",

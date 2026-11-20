@@ -240,6 +240,7 @@ class Orchestrator:
         runtime.bind(self.run)
         try:
             units = planning.load_plan(self.run)
+            self.run.planned_files = [unit.file for unit in units]
             if not units:
                 await self.run.emit(
                     {

@@ -39,6 +39,10 @@ class RunState:
     events: list[dict] = field(default_factory=list)
     subscribers: list[asyncio.Queue] = field(default_factory=list)
     files: dict[str, dict] = field(default_factory=dict)
+    # Files the plan named, whether or not they have been written yet. The verifier uses
+    # this to report a planned file nobody created; the scaffold itself creates only the
+    # first one, so an author is free to add as many more as the work needs.
+    planned_files: list[str] = field(default_factory=list)
     units: list[WorkUnit] = field(default_factory=list)
     usage: dict[str, Usage] = field(default_factory=dict)
     # Who spent it, including agents that are no longer on the current team. A resume

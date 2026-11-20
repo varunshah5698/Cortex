@@ -19,6 +19,7 @@ belong here. The component column is the part of the harness that owned the fail
 | 2026-11-20 | `eca0542ddaf1` | unknown | ValueError: '/private/tmp/cortex-quality-run/runs/eca0542ddaf1/src/main.tsx' is not in the subpath of '/tmp/cortex-quality-run/runs/eca0542ddaf1' OR one path is relative and the ot | — |
 | 2026-11-20 | `9cfd515c54ea` | cancelled | cancelled | — |
 | 2026-11-20 | `201c46c9795f` | cancelled | cancelled | — |
+| 2026-11-20 | `ffcd2d65ccf5` | cancelled | cancelled | — |
 
 ## What changed
 

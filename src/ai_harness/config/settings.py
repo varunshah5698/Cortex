@@ -82,7 +82,9 @@ WORKSPACE_ROOT = Path(os.getenv("HARNESS_WORKSPACE", ROOT / "workspace"))
 RUNS_ROOT = WORKSPACE_ROOT / "runs"
 # Accounts and sessions. On Render this sits beside the workspace; point it at a disk
 # path to survive restarts and free-tier sleeps.
-AUTH_DB = Path(os.getenv("HARNESS_AUTH_DB", str(WORKSPACE_ROOT / "auth.db")))
+# Accounts, sessions and harness state live outside the generated workspace: a run can
+# rewrite its workspace, but a login, roster or token should survive that.
+AUTH_DB = Path(os.getenv("HARNESS_AUTH_DB", str(ROOT / ".harness-auth.db")))
 LOGS_ROOT = ROOT / "logs"
 DIST_DIR = ROOT / "dist"
 
@@ -246,8 +248,8 @@ VERCEL_SCOPE = os.getenv("HARNESS_VERCEL_SCOPE", "").strip()
 VERCEL_TIMEOUT = max(60.0, _float("HARNESS_VERCEL_TIMEOUT", 240.0))
 VERCEL_TTL = _float("HARNESS_VERCEL_TTL", 3600.0)
 
-TOKEN_FILE = Path(os.getenv("HARNESS_TOKEN_FILE", WORKSPACE_ROOT / ".harness-token"))
-ROSTER_FILE = Path(os.getenv("HARNESS_ROSTER_FILE", WORKSPACE_ROOT / ".harness-roster.json"))
+TOKEN_FILE = Path(os.getenv("HARNESS_TOKEN_FILE", ROOT / ".harness-token"))
+ROSTER_FILE = Path(os.getenv("HARNESS_ROSTER_FILE", ROOT / ".harness-roster.json"))
 # Keys live outside the generated workspace and are stored per provider, so resetting
 # the roster (or clearing the workspace) cannot lose a credential.
 KEYS_FILE = Path(os.getenv("HARNESS_KEYS_FILE", ROOT / ".harness-keys.json"))

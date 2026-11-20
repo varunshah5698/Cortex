@@ -1,9 +1,10 @@
 """Accounts and sessions for the public site.
 
 The deployment is public, so the harness needs a real gate rather than the old demo
-login. Passwords are hashed with scrypt and a per-user salt; sessions are random tokens
-stored hashed in SQLite, delivered in an HttpOnly cookie. The database lives beside the
-workspace so a local checkout keeps its accounts and a Render disk can persist them.
+login. Passwords are hashed with PBKDF2-HMAC-SHA256 and a per-user salt; sessions are
+random tokens stored hashed in SQLite, delivered in an HttpOnly cookie. The database
+lives beside the workspace so a local checkout keeps its accounts and a Render disk can
+persist them.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 EMAIL = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]{2,}$")
-SESSION_SECONDS = 7 * 24 * 60 * 60
+SESSION_SECONDS = 30 * 24 * 60 * 60
 PBKDF2_ITERATIONS = 390_000
 PBKDF2_LEN = 32
 

@@ -20,7 +20,7 @@ git push -u origin main
 3. Apply `render.yaml`
 
 Render asks for no password. The site's first screen is a server-backed sign-up/sign-in
-form. Passwords are PBKDF2-HMAC-SHA256 hashed in `workspace/auth.db`; the session is an
+form. Passwords are PBKDF2-HMAC-SHA256 hashed in `.harness-auth.db`; the session is an
 HttpOnly cookie, and `/api` on the public origin requires it. A script can still use
 `X-Harness-Token`, and a loopback browser stays open for local development. The API
 also rejects foreign browser origins.
@@ -37,9 +37,10 @@ A key saved in the workshop lives in a `0600` file on the instance. On a free in
 that file is ephemeral, so environment variables are the durable option. The browser
 never receives a saved key; `GET /api/roster` reports only `has_key`.
 
-Accounts live in `workspace/auth.db`. A free Render instance has an ephemeral disk, so
-accounts and sessions reset on deploy or restart. Set `HARNESS_AUTH_DB` to a path on a
-persistent disk if sign-ups must survive a restart. Keep the provider keys scoped and
+Accounts live in `.harness-auth.db` (migrated once from the old `workspace/auth.db`).
+A free Render instance has an ephemeral disk, so accounts and sessions reset on deploy
+or restart. Set `HARNESS_AUTH_DB` to a path on a persistent disk if sign-ups must
+survive a restart. The session cookie is valid for 30 days on a browser that keeps it. Keep the provider keys scoped and
 the per-run caps low (`HARNESS_MAX_USD`, `HARNESS_MAX_TOKENS`); the service allows one
 run at a time and two queued.
 

@@ -456,7 +456,8 @@ def as_findings(report: dict) -> str:
 
 
 async def run(state: RunState, stage: str = "post-build") -> dict:
-    report = check(state.files, list(state.files.keys()))
+    declared = list(dict.fromkeys([*state.files.keys(), *(getattr(state, "planned_files", []) or [])]))
+    report = check(state.files, declared)
     report["stage"] = stage
     # Tier 2: the artifact's own compiler, when the tree has one installed. It only adds
     # facts (a type error, an unparseable file), so it runs on every structural pass.

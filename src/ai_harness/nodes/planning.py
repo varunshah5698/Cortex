@@ -178,13 +178,17 @@ async def run(run: RunState, planner: Specialist) -> tuple[list[WorkUnit], list[
     for unit in units:
         unit.agent = mapping[unit.id].id
 
-    # The environment exists before any model writes: empty files, real paths.
+    # One starting file, not a fixed tree. The plan names the files it expects, but the
+    # authors create them as they write; extra files are allowed and verified.
+    run.planned_files = list(dict.fromkeys(files))
+    initial = next((unit.file for unit in units if unit.file not in harness_files), "")
+    start = [initial] if initial else []
     await run.emit({"type": "phase", "phase": "scaffolding"})
     async with tool_log.call(
-        run, "file_manager.scaffold", {"files": files}, agent=planner.id, phase="scaffolding"
+        run, "file_manager.scaffold", {"files": start}, agent=planner.id, phase="scaffolding"
     ) as call:
-        created = run.fm.scaffold(files)
-        call.set_result(f"{len(created)} empty file(s) created")
+        created = run.fm.scaffold(start)
+        call.set_result(f"{len(created)} starting file(s) created")
     await run.emit({"type": "scaffold", "files": created, "objective": objective})
     for path in created:
         run.files[path] = {"agent": None, "content": "", "done": False}

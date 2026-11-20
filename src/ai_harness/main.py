@@ -17,6 +17,8 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
+import shutil
+import sqlite3
 import time
 from collections import deque
 from pathlib import Path
@@ -50,6 +52,8 @@ from .config.settings import (
     RETRY_ATTEMPTS,
     ROSTER_FILE,
     RUNNER_MODE,
+    TOKEN_FILE,
+    WORKSPACE_ROOT,
     api_token,
     provider_key,
 )
@@ -74,11 +78,44 @@ app.add_middleware(
     allow_headers=["Content-Type", "X-Harness-Token"],
 )
 
+
+def _migrate_state() -> None:
+    """Move token, roster and accounts out of the workspace once.
+
+    A run owns `workspace/`; a login, a roster and the API token outlive it. Existing
+    files are copied, not moved, so a rollback to the old path still works.
+    """
+    for old, new in (
+        (WORKSPACE_ROOT / ".harness-token", TOKEN_FILE),
+        (WORKSPACE_ROOT / ".harness-roster.json", ROSTER_FILE),
+    ):
+        if old.resolve() == new.resolve() or new.exists() or not old.exists():
+            continue
+        try:
+            new.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(old, new)
+        except OSError:
+            pass
+    old_auth = WORKSPACE_ROOT / "auth.db"
+    if old_auth.exists() and not AUTH_DB.exists():
+        try:
+            AUTH_DB.parent.mkdir(parents=True, exist_ok=True)
+            source = sqlite3.connect(old_auth)
+            source.execute("VACUUM INTO ?", (str(AUTH_DB),))
+            source.close()
+        except (OSError, sqlite3.Error):
+            try:
+                shutil.copy2(old_auth, AUTH_DB)
+            except OSError:
+                pass
+
+
+_migrate_state()
 harness = Harness()
 ROSTER = RosterStore(ROSTER_FILE, KEYS_FILE)
 AUTH = AuthStore(AUTH_DB)
 SESSION_COOKIE = "cortex_session"
-SESSION_MAX_AGE = 7 * 24 * 60 * 60
+SESSION_MAX_AGE = 30 * 24 * 60 * 60
 AUTH_OPEN = {"/api/auth/signup", "/api/auth/login", "/api/auth/me", "/api/auth/logout"}
 _ATTEMPTS: dict[str, deque[float]] = {}
 

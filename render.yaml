@@ -25,8 +25,10 @@ services:
       - key: HARNESS_BROWSER_INTERACT
         value: "0"
       # App-level accounts: sign-up / sign-in. No HTTP Basic auth.
-      # Accounts and sessions live in HARNESS_AUTH_DB (default workspace/auth.db).
-      # Attach a Render disk and point HARNESS_AUTH_DB at it to survive restarts.
+      # Accounts and sessions live in HARNESS_AUTH_DB (default .harness-auth.db).
+      # Attach a Render disk and point HARNESS_AUTH_DB at it to survive deploys.
+      - key: HARNESS_AUTH_DB
+        value: /var/tmp/cortex-auth.db
       # The API still rejects foreign browser origins and non-browser clients
       # without X-Harness-Token.
       # A free instance has 512 MB. One run at a time keeps it honest.
