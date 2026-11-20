@@ -1,0 +1,846 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Cortex — build environment overview</title>
+<style>
+  :root {
+    --bg: #14101b;
+    --wall: #33243f;
+    --ink: #f3ece1;
+    --dim: #9a93a8;
+    --line: #2c2438;
+    --mint: #8ff0c9;
+    --amber: #f2b544;
+    --coral: #ef7d62;
+    --violet: #a08bf0;
+    --teal: #5cc8c8;
+    --green: #7fb069;
+    --pink: #e573a6;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #08060c; color: var(--ink);
+    font-family: var(--mono); overflow: hidden; }
+  #fit { position: fixed; inset: 0; display: grid; place-items: center; }
+  #stage {
+    width: 1280px; height: 720px; position: relative; overflow: hidden;
+    transform-origin: center center;
+    background:
+      radial-gradient(1100px 560px at 50% -12%, #2c1f3c 0%, var(--bg) 58%, #0b0811 100%);
+  }
+  #stage::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(900px 520px at 50% 42%, transparent 40%, rgba(0,0,0,.55) 100%);
+  }
+  .grid {
+    position: absolute; inset: 0; opacity: .16; pointer-events: none;
+    background-image:
+      linear-gradient(to right, #3a2d4a 1px, transparent 1px),
+      linear-gradient(to bottom, #3a2d4a 1px, transparent 1px);
+    background-size: 64px 64px;
+    mask-image: radial-gradient(700px 460px at 50% 30%, #000 20%, transparent 78%);
+  }
+  .scan {
+    position: absolute; inset: 0; pointer-events: none; z-index: 40; opacity: .22;
+    background: repeating-linear-gradient(to bottom, rgba(255,255,255,.045) 0 1px, transparent 1px 3px);
+    mix-blend-mode: soft-light;
+  }
+
+  /* ---------- HUD ---------- */
+  .hud {
+    position: absolute; top: 0; left: 0; right: 0; height: 56px; z-index: 30;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 44px; font-size: 11px; letter-spacing: .22em; color: var(--dim);
+    text-transform: uppercase; border-bottom: 1px solid rgba(255,255,255,.05);
+    background: linear-gradient(to bottom, rgba(10,8,16,.75), rgba(10,8,16,0));
+  }
+  .hud-l { display: flex; align-items: center; gap: 12px; }
+  .hud-mark {
+    width: 18px; height: 18px; border-radius: 3px; display: grid; place-items: center;
+    background: var(--mint); color: #10221b; font-size: 11px; font-weight: 700; letter-spacing: 0;
+    box-shadow: 0 0 0 1px rgba(143,240,201,.35), 0 0 18px rgba(143,240,201,.35);
+  }
+  .hud-b { color: var(--ink); letter-spacing: .3em; }
+  .hud-r { display: flex; align-items: center; gap: 18px; }
+  #chapter { color: var(--mint); }
+  #clock { font-variant-numeric: tabular-nums; color: var(--ink); opacity: .8; }
+
+  /* ---------- scene ---------- */
+  #scene {
+    position: absolute; inset: 56px 0 78px; padding: 28px 52px;
+    display: flex; flex-direction: column; justify-content: center;
+    opacity: 0; transition: opacity .35s ease;
+  }
+  #scene.in { opacity: 1; }
+
+  .sc { display: contents; }
+
+  .lab {
+    display: flex; align-items: baseline; gap: 16px; margin-bottom: 24px;
+    font-size: 11px; letter-spacing: .26em; text-transform: uppercase; color: var(--mint);
+  }
+  .lab span { color: var(--dim); letter-spacing: .08em; text-transform: none; font-size: 12px; }
+
+  .fx { opacity: 0; transform: translateY(12px); transition: opacity .5s ease, transform .5s cubic-bezier(.2,.8,.2,1); }
+  .fx.in { opacity: 1; transform: none; }
+
+  /* ---------- tape ---------- */
+  .tape {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 78px; z-index: 30;
+    padding: 0 44px 14px; background: linear-gradient(to top, rgba(8,6,12,.92), rgba(8,6,12,0));
+  }
+  .tape-bar { position: relative; height: 3px; background: rgba(255,255,255,.09); border-radius: 2px; overflow: hidden; }
+  #playhead { position: absolute; inset: 0 auto 0 0; width: 0%; background: linear-gradient(90deg, var(--teal), var(--mint));
+    box-shadow: 0 0 14px rgba(143,240,201,.6); }
+  #segs { display: flex; gap: 2px; margin-top: 12px; }
+  #segs div {
+    flex: 1; font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase; color: #6c6478;
+    padding-top: 7px; border-top: 1px solid rgba(255,255,255,.07); transition: color .3s, border-color .3s;
+  }
+  #segs div.is-on { color: var(--ink); border-color: var(--mint); }
+
+  /* ---------- shared bits ---------- */
+  .card {
+    border: 1px solid var(--line); border-radius: 10px; background: rgba(30,24,42,.72);
+    box-shadow: 0 18px 40px rgba(0,0,0,.32), inset 0 1px 0 rgba(255,255,255,.04);
+  }
+  .chip {
+    display: inline-flex; align-items: center; gap: 8px; padding: 6px 11px; border-radius: 999px;
+    border: 1px solid var(--line); background: rgba(255,255,255,.03); font-size: 11px; color: var(--dim);
+    letter-spacing: .06em;
+  }
+  .chip b { color: var(--ink); font-weight: 600; }
+  .dot { width: 8px; height: 8px; border-radius: 2px; background: var(--tone, var(--mint)); }
+
+  /* ---------- intro ---------- */
+  .intro { height: 100%; display: grid; place-content: center; justify-items: center; text-align: center; gap: 20px; }
+  .intro h1 {
+    margin: 0; font-size: 74px; letter-spacing: .34em; text-indent: .34em; font-weight: 700;
+    color: #fbf6ee; text-shadow: 0 0 46px rgba(143,240,201,.25), 0 6px 0 #241a2b;
+  }
+  .intro .rule { width: 220px; height: 2px; background: linear-gradient(90deg, transparent, var(--mint), transparent); }
+  .intro p { margin: 0; max-width: 640px; color: var(--dim); font-size: 13.5px; line-height: 1.85; letter-spacing: .04em; }
+  .intro .flow { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 4px; }
+  .intro .flow .chip { animation: bob 3.2s ease-in-out infinite; }
+  @keyframes bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+
+  /* ---------- ask ---------- */
+  .ask { max-width: 900px; margin: 12px auto 0; display: grid; gap: 18px; }
+  .ask-row { display: flex; align-items: center; gap: 12px; font-size: 11px; color: var(--dim); letter-spacing: .16em; text-transform: uppercase; }
+  .ask-card { padding: 24px 26px; font-size: 17px; line-height: 1.8; min-height: 132px; color: #efe7dc; }
+  .ask-card .caret { display: inline-block; width: 9px; height: 19px; background: var(--mint); vertical-align: -3px; margin-left: 3px;
+    animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 0%,49% { opacity: 1; } 50%,100% { opacity: 0; } }
+  .ask-meta { display: flex; gap: 10px; flex-wrap: wrap; }
+
+  .say { margin-top: 18px; font-size: 13.5px; line-height: 1.65; color: #cfc6da; max-width: 940px; }
+  .say b { color: var(--ink); font-weight: 600; }
+
+  /* ---------- how it works ---------- */
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .step { padding: 20px 18px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.02);
+    display: grid; gap: 9px; align-content: start; }
+  .step .n { font-size: 10px; letter-spacing: .22em; color: var(--mint); }
+  .step b { font-size: 14.5px; line-height: 1.35; }
+  .step p { margin: 0; font-size: 12px; line-height: 1.65; color: #a49bb3; }
+
+  /* ---------- capabilities ---------- */
+  .caps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .cap { padding: 16px 18px; border: 1px solid var(--line); border-radius: 9px; background: rgba(255,255,255,.02); }
+  .cap b { display: block; font-size: 13px; letter-spacing: .04em; margin-bottom: 6px; }
+  .cap p { margin: 0; font-size: 11.5px; line-height: 1.6; color: #a49bb3; }
+  .cap i { display: block; width: 18px; height: 2px; background: var(--tone, var(--mint)); margin-bottom: 10px; }
+
+  /* ---------- room ---------- */
+  .room { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 8px; }
+  .who { padding: 18px; display: grid; gap: 12px; position: relative; overflow: hidden; }
+  .who::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 3px; background: var(--tone); opacity: .8; }
+  .who .av {
+    width: 46px; height: 46px; border-radius: 4px; background: color-mix(in srgb, var(--tone) 30%, #1d1728);
+    border: 1px solid color-mix(in srgb, var(--tone) 55%, #1d1728);
+    display: grid; place-items: center; font-size: 18px; color: #fff; letter-spacing: .02em;
+    animation: breathe 2.6s ease-in-out infinite;
+  }
+  @keyframes breathe { 0%,100% { box-shadow: 0 0 0 0 rgba(255,255,255,0); } 50% { box-shadow: 0 0 22px -4px var(--tone); } }
+  .who b { font-size: 15px; letter-spacing: .06em; }
+  .who .role { font-size: 11px; color: var(--dim); letter-spacing: .16em; text-transform: uppercase; }
+  .who code { font-size: 10.5px; color: #7f768f; }
+  .who .st { font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: var(--tone); display: flex; align-items: center; gap: 6px; }
+  .who .what { margin: 0; font-size: 11px; line-height: 1.55; color: #9a91a9; }
+  .who .st i { width: 6px; height: 6px; border-radius: 50%; background: var(--tone); animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.7); } }
+  .room-foot { margin-top: 18px; display: flex; gap: 10px; flex-wrap: wrap; }
+
+  /* ---------- plan ---------- */
+  .units { display: grid; gap: 10px; margin-top: 6px; }
+  .unit {
+    display: grid; grid-template-columns: 68px 1fr 170px 122px; align-items: center; gap: 16px;
+    padding: 16px 20px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.02);
+  }
+  .unit .id { font-size: 11px; color: #6f6780; letter-spacing: .14em; }
+  .unit b { font-size: 14px; letter-spacing: .04em; }
+  .unit .brief { margin-top: 5px; font-size: 11px; color: #8d849c; line-height: 1.4; }
+  .note { margin-top: 16px; display: flex; gap: 12px; align-items: flex-start; font-size: 12px; color: #b8afc6;
+    line-height: 1.6; padding: 13px 16px; border-left: 2px solid rgba(143,240,201,.45);
+    background: rgba(143,240,201,.04); border-radius: 0 8px 8px 0; }
+  .note em { font-style: normal; color: var(--mint); letter-spacing: .16em; text-transform: uppercase; font-size: 9.5px;
+    padding-top: 3px; white-space: nowrap; }
+  .unit .file { font-size: 12px; color: var(--mint); }
+  .unit .own { font-size: 11px; color: var(--dim); display: flex; align-items: center; gap: 8px; }
+  .scaffold { margin-top: 18px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 11.5px; color: var(--dim); }
+  .scaffold .f {
+    padding: 7px 12px; border: 1px dashed #4b3f5f; border-radius: 6px; color: #cfc5e0;
+    font-size: 11.5px;
+  }
+  .scaffold .f.is-fill { border-style: solid; border-color: rgba(143,240,201,.4); color: var(--mint); background: rgba(143,240,201,.06); }
+
+  /* ---------- research ---------- */
+  .query { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+  .query .chip { border-color: rgba(92,200,200,.32); color: var(--teal); }
+  .srcs { display: grid; gap: 9px; }
+  .src { display: grid; grid-template-columns: 132px 1fr; gap: 14px; align-items: center;
+    padding: 12px 16px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.02); font-size: 12px; }
+  .src .host { color: var(--teal); font-size: 10.5px; letter-spacing: .08em; }
+  .src .t { color: #ded5cb; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ---------- building ---------- */
+  .cols { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; height: 326px; }
+  .col { display: grid; grid-template-rows: 38px 1fr 30px; border: 1px solid var(--line); border-radius: 9px;
+    background: rgba(18,14,26,.86); overflow: hidden; }
+  .col.is-typing { border-color: color-mix(in srgb, var(--tone, #8ff0c9) 45%, var(--line)); }
+  .col-h { display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--line);
+    background: rgba(255,255,255,.03); font-size: 11px; }
+  .col-h b { font-size: 11.5px; color: var(--ink); letter-spacing: .04em; }
+  .col-h em { margin-left: auto; font-style: normal; font-size: 10px; color: var(--dim); letter-spacing: .1em; text-transform: uppercase; }
+  .col-b { overflow: hidden; position: relative; }
+  .col-b::after { content: ""; position: absolute; inset: auto 0 0 0; height: 46px;
+    background: linear-gradient(to top, rgba(18,14,26,1), transparent); }
+  .code { margin: 0; padding: 10px 12px; font-size: 11px; line-height: 1.62; color: #b9b0c6;
+    white-space: pre; overflow: hidden; }
+  .code .k { color: var(--coral); }
+  .code .s { color: var(--mint); }
+  .code .c { color: #6a6279; }
+  .col-f { display: flex; align-items: center; gap: 8px; padding: 0 12px; border-top: 1px solid var(--line);
+    font-size: 10px; color: var(--dim); letter-spacing: .1em; text-transform: uppercase; }
+  .col-f .bar { flex: 1; height: 3px; background: rgba(255,255,255,.08); border-radius: 2px; overflow: hidden; }
+  .col-f .bar i { display: block; height: 100%; width: 0%; background: var(--tone); }
+  .badge { font-size: 9px; letter-spacing: .12em; padding: 2px 6px; border-radius: 4px;
+    border: 1px solid rgba(242,181,68,.35); color: var(--amber); }
+  .stats { display: flex; gap: 12px; margin-top: 16px; }
+  .stat { flex: 1; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.02); }
+  .stat span { display: block; font-size: 9.5px; letter-spacing: .2em; text-transform: uppercase; color: #7b7389; }
+  .stat b { display: block; margin-top: 5px; font-size: 20px; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+  /* ---------- verify ---------- */
+  .verify { display: grid; grid-template-columns: 1fr 1.05fr; gap: 22px; }
+  .rules { display: grid; gap: 9px; align-content: start; }
+  .rules .r { display: flex; gap: 10px; align-items: flex-start; font-size: 11.5px; color: #bdb4c9; line-height: 1.5;
+    padding: 9px 12px; border-left: 2px solid #463a59; background: rgba(255,255,255,.02); }
+  .rules .r i { color: var(--mint); font-style: normal; }
+  .pass { padding: 14px 16px; border-radius: 9px; border: 1px solid var(--line); background: rgba(255,255,255,.02); }
+  .pass + .pass { margin-top: 12px; }
+  .pass-h { display: flex; align-items: center; gap: 10px; font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
+  .pass-h b { color: var(--coral); letter-spacing: .1em; }
+  .pass-h.ok b { color: var(--mint); }
+  .issue { margin-top: 9px; display: grid; grid-template-columns: 104px 1fr; gap: 12px; font-size: 11.5px;
+    line-height: 1.5; color: #d6cddb; }
+  .issue code { color: var(--coral); font-size: 10px; letter-spacing: .02em; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+  .fix { margin-top: 10px; display: flex; align-items: center; gap: 8px; font-size: 10.5px; color: var(--amber); letter-spacing: .08em; }
+  .fix i { font-style: normal; color: var(--dim); }
+
+  /* ---------- serve ---------- */
+  .serve { display: grid; grid-template-columns: 400px 1fr; gap: 24px; height: 388px; }
+  .states { display: grid; gap: 8px; align-content: start; }
+  .state { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line);
+    border-radius: 7px; font-size: 11.5px; color: #a9a0b7; background: rgba(255,255,255,.02); }
+  .state em { margin-left: auto; font-style: normal; font-size: 9.5px; letter-spacing: .14em; color: #6f6780; }
+  .state.on { border-color: rgba(143,240,201,.45); color: var(--ink); }
+  .state.on em { color: var(--mint); }
+  .state.done .tick { color: var(--mint); }
+  .logs { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: #0d0a14; border: 1px solid var(--line);
+    font-size: 10px; line-height: 1.7; color: #8ea89b; height: 108px; overflow: hidden; }
+  .logs b { color: var(--mint); font-weight: 500; }
+  .browser { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #121212; display: grid;
+    grid-template-rows: 30px 1fr; }
+  .browser-bar { display: flex; align-items: center; gap: 8px; padding: 0 12px; background: #1c1728;
+    border-bottom: 1px solid var(--line); font-size: 10px; color: #8b8299; }
+  .browser-bar i { width: 7px; height: 7px; border-radius: 50%; background: #4a3f5d; }
+  .browser-bar .url { margin-left: 8px; padding: 3px 10px; border-radius: 5px; background: rgba(0,0,0,.35); color: #a99fc0; }
+  .timer { height: 100%; display: grid; place-content: center; justify-items: center; gap: 18px; background: #121212; }
+  .timer .tt { font-size: 62px; letter-spacing: .1em; color: #e6e6e6; font-variant-numeric: tabular-nums; }
+  .timer .btns { display: flex; gap: 10px; }
+  .timer .btns span { padding: 7px 16px; border-radius: 6px; border: 1px solid #333; color: #bbb; font-size: 11px; }
+  .timer .btns span.p { background: #4a90e2; border-color: #4a90e2; color: #07121f; }
+  .timer .hist { width: 300px; display: grid; gap: 6px; margin-top: 6px; }
+  .timer .hist div { height: 7px; border-radius: 3px; background: #1f1f1f; overflow: hidden; }
+  .timer .hist div i { display: block; height: 100%; background: #00bfa5; width: 0; }
+
+  /* ---------- metrics ---------- */
+  .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 6px; }
+  .metric { padding: 20px 18px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.02); }
+  .metric span { font-size: 9.5px; letter-spacing: .2em; text-transform: uppercase; color: #7b7389; }
+  .metric b { display: block; margin-top: 8px; font-size: 30px; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .metric b i { font-style: normal; font-size: 12px; color: var(--dim); margin-left: 4px; }
+  .outro { margin-top: 26px; display: flex; align-items: center; justify-content: space-between; }
+  .outro .gate { font-size: 12px; color: var(--coral); letter-spacing: .04em; }
+  .outro .gate b { color: var(--ink); }
+  .outro .mark { font-size: 13px; letter-spacing: .4em; color: #6f6780; text-transform: uppercase; }
+  .bar2 { display: flex; height: 8px; border-radius: 4px; overflow: hidden; margin-top: 26px; background: rgba(255,255,255,.05); }
+  .bar2 i { display: block; height: 100%; }
+</style>
+</head>
+<body>
+<div id="fit">
+  <div id="stage">
+    <div class="grid"></div>
+    <div class="scan"></div>
+
+    <header class="hud">
+      <div class="hud-l">
+        <span class="hud-mark">C</span>
+        <span class="hud-b">Cortex</span>
+        <span>/ build environment</span>
+      </div>
+      <div class="hud-r">
+        <span id="chapter">overview</span>
+        <span id="clock">00:00 / 00:00</span>
+      </div>
+    </header>
+
+    <div id="scene"></div>
+
+    <footer class="tape">
+      <div class="tape-bar"><i id="playhead"></i></div>
+      <div id="segs"></div>
+    </footer>
+  </div>
+</div>
+
+<script>
+const D = {"runId": "de9b7f8c8c81", "planNote": "Scaffolded 3 files \u00b7 Markup \u2192 Styling \u2192 Behaviour", "researchNote": "The builders need to implement countdown logic using `setInterval` and `clearInterval`. They must handle button events for start/pause/reset functionality. Session history must be saved using `localStorage`; check for existing values (like minutes and seconds) on page load to ensure persistence.", "dateLabel": "20 Nov 2026 \u00b7 04:26 UTC", "depth": "deep", "model": "gemma4:e4b", "prompt": "Build a small focus timer in plain HTML, CSS and JavaScript: 25-minute countdown, start/pause/reset, a session history saved in localStorage, keyboard shortcuts, and a calm dark theme.", "plan": [{"id": "wu-1", "title": "Markup", "role": "frontend", "file": "index.html", "agent": "vega", "brief": "the complete markup, linking styles.css and app.js by those names."}, {"id": "wu-2", "title": "Styling", "role": "frontend", "file": "styles.css", "agent": "orion", "brief": "the complete styling, sharing ids and classes with the markup."}, {"id": "wu-3", "title": "Behaviour", "role": "backend", "file": "app.js", "agent": "atlas", "brief": "the complete behaviour, wiring the ids and events the markup exposes."}], "scaffold": ["index.html", "styles.css", "app.js"], "queries": ["HTML CSS JavaScript focus timer tutorial", "localStorage task tracking timer"], "sources": [{"title": "Create a Pomodoro Timer using HTML CSS and JavaScript", "host": "geeksforgeeks.org", "url": "https://www.geeksforgeeks.org/javascript/create-a-pomodoro-timer-using-html-css-and-javascript/"}, {"title": "Build a Pomodoro Focus Timer with HTML, CSS and JavaScript", "host": "hostmarts.com", "url": "https://hostmarts.com/tutorials/pomodoro-focus-timer-javascript.php"}, {"title": "HTML/CSS/JS __ Focus timer - GitHub", "host": "github.com", "url": "https://github.com/jbundziow/HTML-CSS-JS__Focus-Timer"}, {"title": "javascript - How to set Local Storage on Timer - Stack Overflow", "host": "stackoverflow.com", "url": "https://stackoverflow.com/questions/39911645/how-to-set-local-storage-on-timer"}, {"title": "Persistent Countdown Timer via LocalStorage - CodePen", "host": "codepen.io", "url": "https://codepen.io/timsamoff/pen/mReLVB"}, {"title": "How to Save and retrieve 24hrs Countdown timer to Local.Storage", "host": "stackoverflow.com", "url": "https://stackoverflow.com/questions/71546324/how-to-save-and-retrieve-24hrs-countdown-timer-to-local-storage"}], "verify": [{"stage": "post-build", "errors": 1, "warnings": 0, "checked": 3, "issues": [{"file": "index.html", "code": "missing_asset", "detail": "links style.css but no such file was written"}], "revised": ["index.html", "styles.css"]}, {"stage": "post-revision", "errors": 2, "warnings": 0, "checked": 3, "issues": [{"file": "index.html", "code": "missing_asset", "detail": "links style.css but no such file was written"}, {"file": "app.js", "code": "missing_id", "detail": "queries '#controls' but index.html declares no element with that id"}]}], "files": [{"path": "styles.css", "agent": "orion", "lines": 187, "revised": true}, {"path": "app.js", "agent": "atlas", "lines": 205, "revised": false}, {"path": "index.html", "agent": "vega", "lines": 39, "revised": true}], "code": {"styles.css": [":root {", "    --color-background: #121212;", "    --color-surface: #1e1e1e;", "    --color-text-primary: #e0e0e0;", "    --color-text-secondary: #888;", "    --color-accent: #4a90e2; /* Calming, soft blue */", "    --color-accent-running: #00bfa5; /* Muted teal for ...", "    --font-family-main: 'Segoe UI', Tahoma, Geneva, Ver...", "}", "", "* {", "    box-sizing: border-box;", "    margin: 0;", "    padding: 0;", "}", "", "body {", "    font-family: var(--font-family-main);", "    background-color: var(--color-background);", "    color: var(--color-text-primary);", "    display: flex;", "    justify-content: center;", "    align-items: center;", "    min-height: 100vh;", "    padding: 20px;", "    transition: background-color 0.3s;", "}", "", ".app-container {", "    display: flex;", "    flex-direction: column;", "    max-width: 900px;", "    width: 100%;", "    background-color: var(--color-surface);", "    border-radius: 12px;", "    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);", "    padding: 30px;", "    gap: 30px;", "}", "", "/* --- Timer Display Styling --- */", ".timer-section {", "    text-align: center;", "    margin-bottom: 20px;", "}", "", "#timer-display {", "    font-family: 'Consolas', monospace;", "    font-size: 6rem;", "    font-weight: 300;", "    letter-spacing: 5px;", "    color: var(--color-text-primary);", "    transition: color 0.3s, text-shadow 0.3s;", "    margin-bottom: 15px;", "}", "", "/* State: Timer is actively running */", ".timer-running #timer-display {", "    color: var(--color-accent-running);", "    text-shadow: 0 0 15px rgba(0, 191, 165, 0.4);", "}", "", "/* --- Controls Styling --- */", "#controls {"], "app.js": ["// 1. Global Variables & State", "const DEFAULT_TIME_SECONDS = 25 * 60; // 25 minutes", "", "let timerState = {", "    timeRemaining: DEFAULT_TIME_SECONDS,", "    isRunning: false,", "    intervalId: null,", "    isComplete: false,", "};", "", "// DOM Element Cache (for performance)", "const $timerDisplay = document.getElementById('timer-di...", "const $controls = document.getElementById('controls');", "const $historyList = document.getElementById('history-l...", "", "// 2. Core Logic Functions", "", "/**", " * Formats seconds into MM:SS string.", " * @param {number} totalSeconds", " * @returns {string}", " */", "const formatTime = (totalSeconds) => {", "    const minutes = Math.floor(totalSeconds / 60);", "    const seconds = Math.floor(totalSeconds % 60);", "    return `${String(minutes).padStart(2, '0')}:${Strin...", "};", "", "/**", " * Updates the visual display based on the current state.", " */", "const renderTime = () => {", "    if (!$timerDisplay) return;", "    $timerDisplay.textContent = formatTime(timerState.t...", "};", "", "/**", " * Updates the button and theme states based on timerSt...", " */", "const renderControls = () => {", "    if (!$controls) return;", "    ", "    // Reset class is used when the timer is paused or ...", "    if (timerState.isRunning) {", "        $controls.classList.add('timer-running');", "        $controls.classList.remove('timer-complete');", "    } else if (timerState.timeRemaining === 0 && !timer...", "        // Timer finished, but not yet logged/reset", "        $controls.classList.add('timer-complete');", "    } else {", "        $controls.classList.remove('timer-running');", "        $controls.classList.remove('timer-complete');", "    }", "};", "", "/**", " * The core countdown mechanism.", " */", "const tick = () => {", "    if (timerState.timeRemaining > 0) {", "        timerState.timeRemaining--;", "        renderTime();", "    } else {", "        // Time reached zero"], "index.html": ["\u003c!DOCTYPE html>", "\u003chtml lang=\"en\">", "\u003chead>", "    \u003cmeta charset=\"UTF-8\">", "    \u003cmeta name=\"viewport\" content=\"width=device-width, ...", "    \u003ctitle>Focus Timer - Pomodoro\u003c/title>", "    \u003clink rel=\"stylesheet\" href=\"style.css\">", "\u003c/head>", "\u003cbody>", "    \u003cdiv class=\"container\">", "        \u003ch1>Focus Timer\u003c/h1>", "        ", "        \u003cdiv class=\"timer-area\">", "            \u003c!-- The current timer value is displayed h...", "            \u003cdiv id=\"timer-display\" class=\"timer-displa...", "            ", "            \u003cdiv class=\"controls\">", "                \u003cbutton id=\"start-btn\" class=\"btn start...", "                \u003cbutton id=\"pause-btn\" class=\"btn pause...", "                \u003cbutton id=\"reset-btn\" class=\"btn reset...", "            \u003c/div>", "        \u003c/div>", "", "        \u003cdiv class=\"settings-info\">", "            \u003cp class=\"status-text\">Ready to focus.\u003c/p>", "        \u003c/div>", "", "        \u003ch2>Session History\u003c/h2>", "        \u003cdiv id=\"history-container\" class=\"history-cont...", "            \u003cul id=\"history-list\">", "                \u003c!-- History items will be injected her...", "                \u003cli class=\"history-item empty-state\">No...", "            \u003c/ul>", "        \u003c/div>", "    \u003c/div>", "", "    \u003cscript src=\"app.js\">\u003c/script>", "\u003c/body>", "\u003c/html>"]}, "agents": [{"id": "atlas", "name": "Atlas", "role": "planner", "model": "gemma4:e4b", "total_tokens": 7236, "ms": 352524, "calls": 7}, {"id": "vega", "name": "Vega", "role": "frontend", "model": "gemma4:e4b", "total_tokens": 7282, "ms": 464484, "calls": 6}, {"id": "orion", "name": "Orion", "role": "backend", "model": "gemma4:e4b", "total_tokens": 9920, "ms": 460417, "calls": 6}, {"id": "lyra", "name": "Lyra", "role": "reviewer", "model": "gemma4:e4b", "total_tokens": 5404, "ms": 78008, "calls": 3}], "totals": {"total_tokens": 29842, "calls": 22, "ms": 1355433, "thinking_chars": 28554, "cost_usd": 0.0}, "budget": {"max_tokens": 600000, "max_usd": 5.0, "remaining_tokens": 570158}, "cache_hits": 0};
+
+const stage = document.getElementById("stage");
+const sceneEl = document.getElementById("scene");
+const chapterEl = document.getElementById("chapter");
+const clockEl = document.getElementById("clock");
+const playhead = document.getElementById("playhead");
+const segsEl = document.getElementById("segs");
+
+const TONE = { planner: "#f2b544", research: "#5cc8c8", reviewer: "#a08bf0", frontend: "#ef7d62",
+  backend: "#7fb069", fullstack: "#e0913f", designer: "#e573a6", writer: "#8fa9e8", tester: "#d7c25c", general: "#9aa3b2" };
+const tone = (r) => TONE[r] || TONE.general;
+const agentName = (id) => (D.agents.find((a) => a.id === id) || {}).name || id;
+const agentRole = (id) => (D.agents.find((a) => a.id === id) || {}).role || "general";
+const ROLE_LINE = {
+  planner: "splits the request into files, and plants them empty",
+  research: "looks up what the team does not already know",
+  frontend: "writes the markup and the styling",
+  backend: "writes the behaviour and wires the events",
+  fullstack: "writes its feature end to end",
+  reviewer: "reads the whole tree and sends fixes back",
+};
+const roleLine = (role) => ROLE_LINE[role] || "writes its own part of the tree";
+const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+
+/** A plain-language line under a scene: what the viewer just watched means. */
+const addSay = (api, el, text, delay = 600) => {
+  const say = document.createElement("div");
+  say.className = "say fx";
+  say.textContent = text;
+  el.appendChild(say);
+  api.after(delay, () => say.classList.add("in"));
+};
+const fmt = (n) => n.toLocaleString("en-US");
+const clock = (ms) => {
+  const t = Math.max(0, ms) / 1000;
+  return `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
+};
+
+/* ------------------------------------------------------------------ engine */
+const SCENES = [];
+const scene = (o) => { SCENES.push(o); return o; };
+
+let idx = -1, t0 = 0, state = null, timers = [], running = true, started = 0;
+const after = (ms, fn) => timers.push(setTimeout(fn, ms));
+const clearTimers = () => { timers.forEach(clearTimeout); timers = []; };
+
+const SEGS = [
+  ["intro", "Overview"], ["ask", "Your part"], ["how", "How it works"], ["room", "The room"],
+  ["plan", "Plan"], ["research", "Research"], ["build", "Building"], ["verify", "Verify"],
+  ["serve", "Serve"], ["caps", "What you get"], ["cost", "Cost"],
+];
+
+function mount(i) {
+  clearTimers();
+  idx = i;
+  const s = SCENES[i];
+  sceneEl.innerHTML = "";
+  sceneEl.classList.remove("in");
+  const api = {
+    after,
+    add: (html) => {
+      sceneEl.insertAdjacentHTML("beforeend", `<div class="sc">${html}</div>`);
+      return sceneEl.lastElementChild;
+    },
+  };
+  state = s.enter ? s.enter(api) : null;
+  void sceneEl.offsetWidth;
+  sceneEl.classList.add("in");
+  t0 = performance.now();
+  chapterEl.textContent = s.name;
+  [...segsEl.children].forEach((seg, k) => seg.classList.toggle("is-on", k === i));
+  s.frame && s.frame(state, 0, 0);
+}
+
+function loop(now) {
+  const s = SCENES[idx];
+  if (running) {
+    const dt = now - t0;
+    if (dt >= s.dur) { mount((idx + 1) % SCENES.length); }
+    else { s.frame && s.frame(state, dt / s.dur, dt); }
+    const total = SCENES.reduce((sum, x) => sum + x.dur, 0);
+    const before = SCENES.slice(0, idx).reduce((sum, x) => sum + x.dur, 0);
+    const here = clamp(now - t0, 0, s.dur);
+    playhead.style.width = `${((before + here) / total) * 100}%`;
+    clockEl.textContent = `${clock(before + here)} / ${clock(total)}`;
+  }
+  requestAnimationFrame(loop);
+}
+
+function fit() {
+  const k = Math.min(window.innerWidth / 1280, window.innerHeight / 720);
+  stage.style.transform = `scale(${k})`;
+}
+
+/* ------------------------------------------------------------------ scenes */
+scene({
+  name: "Overview",
+  dur: 5000,
+  enter(api) {
+    const el = api.add(`
+      <div class="intro">
+        <div class="chip fx">a chain-of-command harness</div>
+        <h1 class="fx">CORTEX</h1>
+        <div class="rule fx"></div>
+        <p class="fx">A team of AI models in one room, building a page together. You describe it once; the room
+          splits the work, looks up what it does not know, writes every file itself, checks the result,
+          and runs it as a real service.</p>
+        <div class="flow" id="flow">
+          ${["plan", "research", "contracts", "build", "verify", "serve"]
+            .map((s, i) => `<span class="chip fx" style="animation-delay:${i * 0.3}s">${s}</span>`).join("")}
+        </div>
+      </div>`);
+    const items = [...el.querySelectorAll(".fx"), ...el.querySelectorAll(".flow .chip")];
+    items.forEach((node, i) => api.after(120 + i * 130, () => node.classList.add("in")));
+  },
+});
+
+scene({
+  name: "The ask",
+  dur: 5400,
+  enter(api) {
+    const el = api.add(`
+      <div class="ask">
+        <div class="lab">01 — your part<span>describe the page you want, once</span></div>
+        <div class="ask-row">you → the room <span class="chip" style="margin-left:auto">run ${D.runId} · ${D.dateLabel}</span></div>
+        <div class="ask-card card"><span id="typed"></span><span class="caret"></span></div>
+        <div class="say fx" id="say">That sentence is the whole input. The room picks the stack, the files,
+        and who writes each one — you never scaffold a project or wire the agents up.</div>
+        <div class="ask-meta" id="meta">
+          <span class="chip">depth <b>${esc(D.depth)}</b></span>
+          <span class="chip">budget <b>${fmt(D.budget.max_tokens)} tok</b> / <b>$${D.budget.max_usd.toFixed(2)}</b></span>
+          <span class="chip">specialists <b>${D.agents.length}</b></span>
+          <span class="chip">engine <b>${esc(D.model)}</b></span>
+        </div>
+      </div>`);
+    el.querySelector(".lab").classList.add("fx", "in");
+    el.querySelector(".ask-card").classList.add("fx");
+    api.after(60, () => el.querySelector(".ask-card").classList.add("in"));
+    [...el.querySelectorAll("#meta .chip")].forEach((c, i) => {
+      c.classList.add("fx");
+      api.after(2900 + i * 140, () => c.classList.add("in"));
+    });
+    api.after(3000, () => el.querySelector("#say").classList.add("in"));
+    return { typed: el.querySelector("#typed"), n: 0 };
+  },
+  frame(st, p) {
+    const n = Math.floor(clamp((p * 1.5) / 1 * 1, 0, 1) * D.prompt.length);
+    if (n !== st.n) { st.n = n; st.typed.textContent = D.prompt.slice(0, n); }
+  },
+});
+
+scene({
+  name: "How it works",
+  dur: 6400,
+  enter(api) {
+    const el = api.add(`
+      <div class="lab">02 — how it works<span>three steps, and the harness enforces all three</span></div>
+      <div class="steps">
+        <div class="step fx"><span class="n">STEP 01</span><b>You describe the page</b>
+          <p>One sentence in the build room — “a focus timer with a dark theme”. No scaffold, no config file,
+          no model wiring on your side.</p></div>
+        <div class="step fx"><span class="n">STEP 02</span><b>The room divides the work</b>
+          <p>A planner turns the sentence into units and files, research fills the gaps, and every specialist
+          writes only its own file — at the same time, not in a queue.</p></div>
+        <div class="step fx"><span class="n">STEP 03</span><b>You get a page that runs</b>
+          <p>A verifier reads the tree, a reviewer sends the findings back to the authors, and the harness
+          installs, builds and serves the result on its own port.</p></div>
+      </div>
+      <div class="say fx">Cortex is the harness behind that loop: Python for the pipeline and the guarantees,
+        React for the room you watch it in. Every stage is a node you can read, and every guarantee lives in
+        code rather than in a prompt.</div>`);
+    [...el.querySelectorAll(".step")].forEach((s, i) => api.after(200 + i * 420, () => s.classList.add("in")));
+    api.after(1700, () => el.querySelector(".say").classList.add("in"));
+  },
+});
+
+scene({
+  name: "The room",
+  dur: 5600,
+  enter(api) {
+    const el = api.add(`
+      <div class="lab">03 — the room<span>specialists with jobs, not one model with a long prompt</span></div>
+      <div class="room">
+        ${D.agents.map((a, i) => `
+          <div class="who card fx" style="--tone:${tone(a.role)}">
+            <span class="av">${esc(a.name.slice(0, 1))}</span>
+            <div><b>${esc(a.name)}</b><div class="role">${esc(a.role)}</div></div>
+            <code>${esc(a.model)}</code>
+            <p class="what">${roleLine(a.role)}</p>
+            <span class="st"><i></i>${i === D.agents.length - 1 ? "reviewing" : "thinking"}</span>
+          </div>`).join("")}
+      </div>
+      <div class="room-foot">
+        <span class="chip fx">zones <b>planning · research · coding · review</b></span>
+        <span class="chip fx">api keys <b>stay on the server</b></span>
+        <span class="chip fx">you watch it in <b>the pixel office</b></span>
+      </div>`);
+    const cards = [...el.querySelectorAll(".who")];
+    cards.forEach((c, i) => api.after(180 + i * 220, () => c.classList.add("in")));
+    [...el.querySelectorAll(".room-foot .chip")].forEach((c, i) => api.after(1300 + i * 160, () => c.classList.add("in")));
+    api.after(1300, () => {
+      const say = document.createElement("div");
+      say.className = "say fx";
+      say.textContent = "Each specialist is a provider, a model and a role you choose in the workshop. The key you " +
+        "type there is sent once to the harness and never comes back to the browser.";
+      el.appendChild(say);
+      requestAnimationFrame(() => requestAnimationFrame(() => say.classList.add("in")));
+    });
+  },
+});
+
+scene({
+  name: "Plan",
+  dur: 5600,
+  enter(api) {
+    const el = api.add(`
+      <div class="lab">04 — plan &amp; scaffold<span>one sentence becomes files, before a single token is spent</span></div>
+      <div class="units">
+        ${D.plan.map((u) => `
+          <div class="unit fx">
+            <span class="id">${esc(u.id)}</span>
+            <div><b>${esc(u.title)}</b><div class="brief">${esc(u.brief)}</div></div>
+            <span class="file">${esc(u.file)}</span>
+            <span class="own"><span class="dot" style="--tone:${tone(u.role)}"></span>${esc(agentName(u.agent))}</span>
+          </div>`).join("")}
+      </div>
+      <div class="scaffold" id="scaf">
+        <span>${D.scaffold.length} empty files planted before a single token is spent →</span>
+        ${D.scaffold.map((f) => `<span class="f">${esc(f)}</span>`).join("")}
+      </div>
+      <div class="note fx" id="pnote"><em>planner</em><span>${esc(D.planNote || "split the request, then plant the tree")}</span></div>`);
+    [...el.querySelectorAll(".unit")].forEach((u, i) => api.after(160 + i * 300, () => u.classList.add("in")));
+    api.after(1000, () => el.querySelector("#scaf").classList.add("fx", "in"));
+    [...el.querySelectorAll("#scaf .f")].forEach((f, i) =>
+      api.after(1300 + i * 200, () => f.classList.add("is-fill")));
+    api.after(2000, () => el.querySelector("#pnote").classList.add("in"));
+  },
+});
+
+scene({
+  name: "Research",
+  dur: 5200,
+  enter(api) {
+    const el = api.add(`
+      <div class="lab">05 — research<span>what the team does not know, it looks up</span></div>
+      <div class="query">
+        ${D.queries.map((q) => `<span class="chip fx">⌕ ${esc(q)}</span>`).join("")}
+      </div>
+      <div class="srcs">
+        ${D.sources.map((s) => `
+          <div class="src fx">
+            <span class="host">${esc(s.host)}</span>
+            <span class="t">${esc(s.title)}</span>
+          </div>`).join("")}
+      </div>
+      <div class="note fx" id="rnote"><em>hand-off</em><span>${esc(D.researchNote || "what the team keeps from the search")}</span></div>`);
+    [...el.querySelectorAll(".query .chip")].forEach((c, i) => api.after(120 + i * 200, () => c.classList.add("in")));
+    [...el.querySelectorAll(".src")].forEach((s, i) => api.after(500 + i * 190, () => s.classList.add("in")));
+    api.after(2200, () => el.querySelector("#rnote").classList.add("in"));
+  },
+});
+
+scene({
+  name: "Building",
+  dur: 15800,
+  enter(api) {
+    const files = D.files;
+    const el = api.add(`
+      <div class="lab">06 — building<span>every specialist writes its own file, while the others do too</span></div>
+      <div class="cols">
+        ${files.map((f) => `
+          <div class="col" style="--tone:${tone(agentRole(f.agent))}">
+            <div class="col-h"><span class="dot"></span><b>${esc(f.path)}</b><em>${esc(agentName(f.agent))}</em></div>
+            <div class="col-b"><pre class="code"></pre></div>
+            <div class="col-f">
+              <span class="num">0</span>/<span>${f.lines}</span> lines
+              <span class="bar"><i></i></span>
+              ${f.revised ? `<span class="badge">revised</span>` : ""}
+            </div>
+          </div>`).join("")}
+      </div>
+      <div class="stats">
+        <div class="stat"><span>tokens</span><b id="s-tok">0</b></div>
+        <div class="stat"><span>calls</span><b id="s-call">0</b></div>
+        <div class="stat"><span>model time</span><b id="s-ms">0s</b></div>
+        <div class="stat"><span>thinking</span><b id="s-think">0</b></div>
+      </div>`);
+    el.querySelector(".lab").classList.add("fx", "in");
+    addSay(api, el, "Nothing is concatenated at the end: each author's answer is streamed straight into its own " +
+      "path, so the room can write in parallel and you can watch a file appear while it is still being written.", 900);
+    const cols = files.map((f, i) => {
+      const node = el.querySelectorAll(".col")[i];
+      return { node, pre: node.querySelector(".code"), num: node.querySelector(".num"),
+        bar: node.querySelector(".bar i"), src: D.code[f.path] || [], lines: f.lines,
+        start: 0.03 * i, span: 0.9 - 0.03 * i, shown: -1 };
+    });
+    return { cols, tok: el.querySelector("#s-tok"), call: el.querySelector("#s-call"),
+      ms: el.querySelector("#s-ms"), think: el.querySelector("#s-think") };
+  },
+  frame(st, p) {
+    for (const c of st.cols) {
+      const q = clamp((p - c.start) / c.span);
+      const n = Math.round(q * c.lines);
+      if (n !== c.shown) {
+        c.shown = n;
+        const shown = c.src.slice(0, Math.max(1, Math.round(q * c.src.length))).slice(-15);
+        c.pre.innerHTML = shown.map((line) => colorize(line)).join("\n");
+        c.num.textContent = fmt(n);
+        c.bar.style.width = `${q * 100}%`;
+        c.node.classList.toggle("is-typing", q > 0.02 && q < 0.98);
+      }
+    }
+    st.tok.textContent = fmt(Math.round(p * D.totals.total_tokens));
+    st.call.textContent = Math.round(p * D.totals.calls);
+    st.ms.textContent = `${Math.round(p * D.totals.ms / 1000)}s`;
+    st.think.textContent = `${fmt(Math.round(p * D.totals.thinking_chars / 1000))}k`;
+  },
+});
+
+scene({
+  name: "Verify",
+  dur: 9400,
+  enter(api) {
+    const el = api.add(`
+      <div class="lab">07 — verify<span>the tree is checked by code, not by a model's opinion</span></div>
+      <div class="verify">
+        <div class="rules">
+          ${[
+            "empty files that were declared but never written",
+            "markup that links an asset nobody wrote",
+            "a script wiring an id no element declares",
+            "a JSON manifest that does not parse",
+            "relative imports that resolve to nothing",
+          ].map((r) => `<div class="r fx"><i>✓</i><span>${r}</span></div>`).join("")}
+          <div class="r fx" style="border-color:#6b4a5f"><i style="color:#f2b544">!</i>
+            <span>findings go to the reviewer as evidence it cannot dismiss</span></div>
+        </div>
+        <div class="passes">
+          ${D.verify.map((v, i) => `
+            <div class="pass fx" data-pass="${i}">
+              <div class="pass-h ${v.errors === 0 ? "ok" : ""}">
+                <b>${v.errors === 0 ? "clean" : v.errors + " error" + (v.errors > 1 ? "s" : "")}</b>
+                ${esc(v.stage)} · ${v.checked} files checked
+              </div>
+              ${v.issues.map((x) => `
+                <div class="issue"><code>${esc(x.code)}</code><span><b>${esc(x.file)}</b> — ${esc(x.detail)}</span></div>`).join("")}
+              ${v.revised && v.revised.length ? `<div class="fix">↺ sent back → <i>${v.revised.map(esc).join(" · ")}</i></div>` : ""}
+            </div>`).join("")}
+        </div>
+      </div>`);
+    el.querySelector(".lab").classList.add("fx", "in");
+    [...el.querySelectorAll(".rules .r")].forEach((r, i) => api.after(120 + i * 150, () => r.classList.add("in")));
+    [...el.querySelectorAll(".pass")].forEach((pass, i) => api.after(1200 + i * 2400, () => pass.classList.add("in")));
+    addSay(api, el, "An error is never overruled by a confident reply: the reviewer gets the report as evidence, " +
+      "and the gate is the verifier — which is why this run ends with two errors still on the record.", 4600);
+  },
+});
+
+scene({
+  name: "Serve",
+  dur: 8400,
+  enter(api) {
+    const el = api.add(`
+      <div class="lab">08 — serve<span>the page is installed, built and served — not screenshotted</span></div>
+      <div class="serve">
+        <div>
+          <div class="states">
+            ${["detect the stack", "read the manifest", "install what it declares", "serve on a free loopback port"]
+              .map((s) => `<div class="state"><span class="tick">•</span><span>${s}</span><em>—</em></div>`).join("")}
+          </div>
+          <div class="logs" id="logs"></div>
+        </div>
+        <div class="browser">
+          <div class="browser-bar"><i></i><i></i><i></i><span class="url">127.0.0.1:&lt;free port&gt;</span></div>
+          <div class="timer">
+            <div class="tt" id="tt">25:00</div>
+            <div class="btns"><span class="p">Start</span><span>Pause</span><span>Reset</span></div>
+            <div class="hist">
+              ${[36, 64, 48, 22].map((w, i) => `<div><i data-w="${w}" style="width:${w}%"></i></div>`).join("")}
+            </div>
+          </div>
+        </div>
+      </div>`);
+    el.querySelector(".lab").classList.add("fx", "in");
+    const states = [...el.querySelectorAll(".state")];
+    const logs = el.querySelector("#logs");
+    const lines = [
+      "runner: detected plain html — no manifest, no build step",
+      "runner: serving workspace/runs/" + D.runId,
+      "runner: bound 127.0.0.1:<free port>",
+      "<b>runner: ready</b>",
+    ];
+    addSay(api, el, "FastAPI goes through `uvicorn`, a package.json through `npm install` and a build, plain HTML " +
+      "as written — each on a free loopback port, with its log on screen if a step fails.", 900);
+    states.forEach((s, i) => api.after(300 + i * 900, () => {
+      s.classList.add("on", "done");
+      s.querySelector(".tick").textContent = "✓";
+      s.querySelector("em").textContent = i === 3 ? "ready" : "ok";
+      logs.insertAdjacentHTML("beforeend", lines[i] + "<br>");
+    }));
+    return { tt: el.querySelector("#tt") };
+  },
+  frame(st, p) {
+    const left = 1500 - Math.floor(clamp((p - 0.25) / 0.75) * 168);
+    const m = String(Math.floor(left / 60)).padStart(2, "0");
+    const s = String(left % 60).padStart(2, "0");
+    st.tt.textContent = `${m}:${s}`;
+  },
+});
+
+scene({
+  name: "What you get",
+  dur: 7800,
+  enter(api) {
+    const caps = [
+      ["chat", "Chat", "Ask one specialist anything. Its reasoning streams in a separate panel, and a self-check says whether the answer is on track."],
+      ["workshop", "Workshop", "Each specialist is a provider, a model and a role. A key typed here is stored 0600 on the server and never returned."],
+      ["build", "Build room", "The pixel office: who is planning, who is researching, who is writing which file, and what it costs as it happens."],
+      ["files", "Files", "Every file the room wrote, in a tree, with a per-file code view — plus the empty ones that were planted first."],
+      ["runtime", "Runtime", "Tokens, latency and dollars per agent and per call, the run's budget, the verification report and the prompt fingerprints."],
+      ["guards", "Guardrails", "A token and dollar budget, a 0600 roster, an origin and token check on /api, a path sandbox, and process permissions."],
+    ];
+    const el = api.add(`
+      <div class="lab">09 — what you get<span>one harness behind four screens, plus the guarantees</span></div>
+      <div class="caps">
+        ${caps.map(([id, name, text], i) => `
+          <div class="cap fx" style="--tone:${["#8ff0c9", "#f2b544", "#ef7d62", "#7fb069", "#a08bf0", "#5cc8c8"][i]}">
+            <i></i><b>${name}</b><p>${text}</p>
+          </div>`).join("")}
+      </div>
+      <div class="say fx">If you only ever use one screen, make it the build room: the other three exist so that what
+        happens there is configurable, inspectable, and priced.</div>`);
+    [...el.querySelectorAll(".cap")].forEach((c, i) => api.after(180 + i * 220, () => c.classList.add("in")));
+    api.after(1500, () => el.querySelector(".say").classList.add("in"));
+  },
+});
+
+scene({
+  name: "Cost",
+  dur: 7600,
+  enter(api) {
+    const el = api.add(`
+      <div class="lab">10 — what it cost<span>every call priced, charged to the run's ledger</span></div>
+      <div class="metrics">
+        ${[
+          ["files written", D.files.length, ""],
+          ["lines", D.files.reduce((s, f) => s + f.lines, 0), ""],
+          ["tokens", D.totals.total_tokens, ""],
+          ["calls", D.totals.calls, ""],
+        ].map(([label, value], i) => `
+          <div class="metric fx"><span>${label}</span><b data-n="${value}" data-i="${i}">0</b></div>`).join("")}
+      </div>
+      <div class="metrics" style="margin-top:14px">
+        ${[
+          ["model time", D.totals.ms >= 90000 ? (D.totals.ms / 60000).toFixed(1) + "m" : Math.round(D.totals.ms / 1000) + "s"],
+          ["spend", "$" + D.totals.cost_usd.toFixed(2)],
+          ["cache hits", D.cache_hits],
+          ["budget left", fmt(D.budget.remaining_tokens) + " tok"],
+        ].map(([label, value]) => `
+          <div class="metric fx"><span>${label}</span><b style="font-size:22px">${value}</b></div>`).join("")}
+      </div>
+      <div class="bar2" id="share">
+        ${D.agents.map((a) => `<i style="width:${(a.total_tokens / D.totals.total_tokens) * 100}%;background:${tone(a.role)}" title="${a.name}"></i>`).join("")}
+      </div>
+      <div class="outro">
+        <div class="gate">verification: <b>${D.verify[D.verify.length - 1].errors} error(s) still open</b> — the gate is a check, not a promise</div>
+        <div class="mark">cortex · plan · build · check · serve</div>
+      </div>`);
+    const cards = [...el.querySelectorAll(".metric")];
+    cards.forEach((c, i) => api.after(120 + i * 120, () => c.classList.add("in")));
+    const nums = [...el.querySelectorAll("[data-n]")];
+    return { nums, t: 0 };
+  },
+  frame(st, p) {
+    const q = clamp((p - 0.1) / 0.6);
+    st.nums.forEach((n) => {
+      n.textContent = fmt(Math.round(q * Number(n.dataset.n)));
+    });
+  },
+});
+
+/* ------------------------------------------------------------------ helpers */
+const KEYWORDS = /\b(const|let|var|function|return|if|else|for|while|new|class|import|export|document|window|localStorage|true|false|null)\b/g;
+
+/** Highlight one line without ever re-parsing markup it produced itself. */
+function colorize(raw) {
+  const code = (text) => esc(text).replace(KEYWORDS, '<span class="k">$1</span>');
+  const tokens = /(\/\/[^\n]*|\/\*[\s\S]*?\*\/|"[^"\n]*"|'[^'\n]*'|`[^`\n]*`)/g;
+  const out = [];
+  let last = 0, match;
+  while ((match = tokens.exec(raw)) !== null) {
+    if (match.index > last) out.push(code(raw.slice(last, match.index)));
+    const tok = match[0];
+    const cls = tok.startsWith("//") || tok.startsWith("/*") ? "c" : "s";
+    out.push(`<span class="${cls}">${esc(tok)}</span>`);
+    last = match.index + tok.length;
+  }
+  out.push(code(raw.slice(last)));
+  return out.join("");
+}
+
+/* ------------------------------------------------------------------ boot */
+segsEl.innerHTML = SCENES.map((s, i) => `<div>${SEGS[i] ? SEGS[i][1] : s.name}</div>`).join("");
+window.addEventListener("resize", fit);
+fit();
+mount(0);
+requestAnimationFrame((t) => { started = t; t0 = t; loop(t); });
+
+// Space pauses the film (handy while recording a segment).
+window.addEventListener("keydown", (e) => {
+  if (e.code === "Space") {
+    e.preventDefault();
+    running = !running;
+    if (running) t0 = performance.now() - pausedAt;
+  } else if (e.code === "ArrowRight") {
+    mount((idx + 1) % SCENES.length);
+  }
+});
+let pausedAt = 0;
+setInterval(() => { if (!running) pausedAt = performance.now() - t0; }, 100);
+</script>
+</body>
+</html>

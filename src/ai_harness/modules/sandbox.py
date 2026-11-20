@@ -1,0 +1,108 @@
+"""Containment for the processes the runner starts.
+
+`modules/permissions.py` decides *whether* a command may run; this module limits what
+that command can reach once it does. The distinction matters: allow/ask/deny is a filter
+over command strings, and `npm install` runs whatever install script a model put in
+`package.json`. The guide's Appendix A says the same thing — a pattern rule is not a
+sandbox — so the step that executes model-authored code is wrapped in a real one.
+
+On macOS that is `sandbox-exec` with a generated profile:
+
+* **writes** are denied anywhere under the owner's home except the run workspace and the
+  package-manager caches (`~/Library`, `~/.npm`, `~/.cache`), so an install cannot drop a
+  file into Documents, Desktop or a sibling project;
+* **reads** of key material (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.netrc`, `~/.config/gh`,
+  `~/.docker/config.json`) are denied outright, so a dependency's postinstall script
+  cannot exfiltrate a key it found on disk.
+
+Everywhere else — another platform, `HARNESS_SANDBOX=0`, or a machine without
+`sandbox-exec` — the child runs unsandboxed and `describe()` says so. The harness never
+claims containment it does not have; the service log carries the sentence either way.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import sys
+import tempfile
+from pathlib import Path
+
+ENABLED = os.getenv("HARNESS_SANDBOX", "1").strip().lower() not in ("0", "false", "no", "off")
+HOME = Path.home()
+
+# Writes are denied under HOME, then allowed back for these subtrees.
+CACHE_WRITES = ("Library", ".npm", ".cache", ".yarn", ".local/share")
+# Key material a model-written build has no reason to read.
+SECRET_READS = (
+    ".ssh",
+    ".aws",
+    ".gnupg",
+    ".netrc",
+    ".config/gh",
+    ".docker/config.json",
+    ".kube",
+)
+SYSTEM_WRITES = ("/private/tmp", "/tmp", "/dev", "/var/folders")
+
+
+def available() -> bool:
+    """True when a real containment mechanism exists here. Checked, never assumed."""
+    return ENABLED and sys.platform == "darwin" and shutil.which("sandbox-exec") is not None
+
+
+def _sub(path: Path | str) -> str:
+    return f'(subpath "{path}")'
+
+
+def profile(workspace: Path) -> str:
+    """The sandbox profile for one run's workspace.
+
+    ``(allow default)`` then narrow denials: a profile that fails to parse would let
+    `sandbox-exec` refuse to start, which the runner reports as a dead server rather than
+    silently running unprotected.
+    """
+    allow_writes = [_sub(workspace), *(_sub(HOME / part) for part in CACHE_WRITES)]
+    allow_writes += [_sub(path) for path in SYSTEM_WRITES]
+    deny_reads = " ".join(_sub(HOME / part) for part in SECRET_READS)
+    return "\n".join(
+        [
+            "(version 1)",
+            "(allow default)",
+            f"(deny file-write* {_sub(HOME)})",
+            f"(allow file-write* {' '.join(allow_writes)})",
+            f"(deny file-read* {deny_reads})",
+        ]
+    )
+
+
+def _profile_file(run_id: str, workspace: Path) -> Path:
+    path = Path(tempfile.gettempdir()) / f"harness-sandbox-{run_id}.sb"
+    text = profile(workspace)
+    try:
+        if path.read_text(encoding="utf-8") != text:
+            path.write_text(text, encoding="utf-8")
+    except OSError:
+        path.write_text(text, encoding="utf-8")
+    return path
+
+
+def prefix(run_id: str, workspace: Path) -> list[str]:
+    """`sandbox-exec -f profile --` when containment is available, else nothing."""
+    if not available():
+        return []
+    try:
+        return ["sandbox-exec", "-f", str(_profile_file(run_id, workspace)), "--"]
+    except OSError:
+        return []
+
+
+def describe() -> str:
+    """A sentence for the service log: what is actually containing this process."""
+    if available():
+        return "sandbox: writes limited to the run workspace and caches; key stores unreadable"
+    if not ENABLED:
+        return "sandbox: disabled by HARNESS_SANDBOX — processes run with the owner's access"
+    if sys.platform != "darwin":
+        return f"sandbox: not available on {sys.platform} — processes run with the owner's access"
+    return "sandbox: sandbox-exec is missing — processes run with the owner's access"

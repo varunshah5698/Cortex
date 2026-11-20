@@ -1,0 +1,49 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash scripts/verify.sh)",
+      "Bash(bash scripts/setup.sh)",
+      "Bash(./.venv/bin/ruff *)",
+      "Bash(./.venv/bin/python -m pytest*)",
+      "Bash(npm run typecheck)",
+      "Bash(npm run dev)",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Read(src/**)",
+      "Read(tests/**)",
+      "Read(docs/**)",
+      "Edit(src/**)",
+      "Edit(tests/**)",
+      "Edit(docs/**)"
+    ],
+    "ask": [
+      "Bash(git push *)",
+      "Bash(npm install *)",
+      "Bash(pip install *)",
+      "Bash(PYTHONPATH=src ./.venv/bin/python -m uvicorn *)",
+      "WebFetch"
+    ],
+    "deny": [
+      "Read(.env)",
+      "Read(workspace/.harness-token)",
+      "Read(workspace/.harness-roster.json)",
+      "Read(secrets/**)",
+      "Bash(rm -rf *)",
+      "Bash(sudo *)",
+      "Bash(git commit --no-verify*)",
+      "Bash(git push --force*)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash scripts/verify.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

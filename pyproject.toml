@@ -1,0 +1,44 @@
+[project]
+name = "ai-harness"
+version = "0.3.0"
+description = "Cortex — a chain-of-command harness for multi-model software work"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi==0.115.6",
+  "uvicorn==0.34.0",
+  "httpx==0.28.1",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+# Only the project is linted: generated builds, run sandboxes and course material are not.
+exclude = [
+    ".venv",
+    "node_modules",
+    "dist",
+    "workspace",
+    # The eval suite's own sandbox: a run writes app.py, package.json and node_modules
+    # here, and `--build` installs into it. Generated, like workspace/runs.
+    "evals/.runs",
+    "logs",
+    ".course-ref",
+    ".freebuff",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# UP038 would rewrite `isinstance(x, (a, b))` into `isinstance(x, a | b)`. The project's
+# venv is Python 3.9 (see AGENTS.md), where that union raises TypeError at runtime, so
+# the rewrite is wrong for this tree even though ruff targets py310.
+ignore = ["E501", "UP038"]
+
+[tool.ruff.lint.per-file-ignores]
+# pydantic evaluates annotations at runtime, and the project's venv is Python 3.9, so
+# `X | None` in a request model raises instead of resolving. UP045 stays off there.
+"src/ai_harness/main.py" = ["UP045"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Quiet is the caller's choice (`pytest -q`); a second `-q` here would hide the summary.
+addopts = "--strict-markers"

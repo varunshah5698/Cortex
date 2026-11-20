@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Every commit runs the one command (AGENTS.md). A check that only runs when somebody
+# remembers is not a gate; this is the same script the Stop hook and CI would run.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+exec bash scripts/verify.sh
