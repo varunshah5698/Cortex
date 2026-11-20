@@ -10,6 +10,7 @@ import {
   fmtMs,
   fmtNumber,
   loadFile,
+  loadFiles,
   loadRuns,
   liveUrl,
   previewUrl,
@@ -210,6 +211,10 @@ export default function Build() {
     runIdRef.current = runId;
     startedKey.current = null;
     autoBooted.current = null;
+    // A toast belongs to the run that raised it. Switching runs used to carry the old
+    // run's failure into a healthy one, which read as "this run is broken too".
+    setError(null);
+    setNotice(null);
   }, [runId]);
 
   // A run id in localStorage can outlive the deployment or workspace that created it.
@@ -218,6 +223,12 @@ export default function Build() {
   useEffect(() => {
     if (!runId) return;
     let alive = true;
+    // A fresh run id starts from a clean slate. Without this the room carried the
+    // previous run's `failed` phase into a run that had only just emitted `start`, so
+    // the header read "Failed" 113ms in while the team was still loading the model.
+    setPhase("idle");
+    setError(null);
+    setNotice(null);
     runExists(runId)
       .then((exists) => {
         if (!alive || exists !== false) return;
@@ -226,6 +237,32 @@ export default function Build() {
         setRunning(false);
         setPhase("idle");
         setNotice("That run is not on this Cortex instance. Start a new run or pick one from history.");
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [runId]);
+
+  // Reopening a finished run used to show an empty preview pane: the file list was only
+  // ever built from live `file_end` events, so a run restored from disk had none. The
+  // files are on disk and the API already lists them — ask for them.
+  useEffect(() => {
+    if (!runId) {
+      setFiles([]);
+      return;
+    }
+    let alive = true;
+    loadFiles(runId)
+      .then((result) => {
+        if (!alive || !result) return;
+        setFiles((prev) => {
+          // A live run is still appending; never replace what the stream already knows.
+          const seen = new Set(prev.map((file) => file.path));
+          const merged = [...prev];
+          for (const file of result.files) if (!seen.has(file.path)) merged.push(file);
+          return merged;
+        });
       })
       .catch(() => {});
     return () => {
@@ -883,6 +920,7 @@ export default function Build() {
             <Icon name="logo" size={14} />
           </span>
           <span>Cortex</span>
+          <em className="bld-brand-tag">Build room</em>
         </button>
 
         <div className="bld-run">
@@ -955,6 +993,17 @@ export default function Build() {
           </button>
         </div>
       </header>
+
+      <div
+        className={`bld-progress${running ? " is-live" : ""}`}
+        role="progressbar"
+        aria-label="Run progress"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={progress}
+      >
+        <i style={{ width: `${progress}%` }} />
+      </div>
 
       <div className="bld-body">
         {railOpen && (
@@ -1086,9 +1135,9 @@ export default function Build() {
         )}
         <section className="bld-room">
           <div className="bld-room-bar">
-            <span className="bld-objective">
+            <span className="bld-objective" title={objective || undefined}>
               <Icon name="bulb" size={13} />
-              {objective || "Tell the team what to build — they plan, look things up, then write together."}
+              <span>{objective || "Tell the team what to build — they plan, look things up, then write together."}</span>
             </span>
             <span className="bld-room-stats">
               <i>
@@ -1239,7 +1288,7 @@ export default function Build() {
           <div className="bld-pane">
             {tab === "preview" && (
               <div className="pv">
-                {runId && (files.length > 0 || service || running || phase !== "idle") ? (
+                {runId ? (
                   <>
                     {serviceNeedsApproval && (
                       <div className="pv-approval">
@@ -1411,11 +1460,13 @@ export default function Build() {
                       </details>
                     )}
                     {/*
-                      Sandboxed and cross-origin on purpose: this is model-written code. No
-                      `allow-same-origin`, so it has an opaque origin and no storage, and it
-                      cannot reach `/api` (that would be cross-origin, and the API refuses a
-                      foreign origin). Apps that rely on relative `fetch()` or localStorage
-                      will not work here — that is the cost of running generated code.
+                      Sandboxed, and cross-origin by construction: this is model-written code.
+                      `allow-same-origin` is required, not optional — without it the frame has
+                      an opaque origin, so `localStorage` throws and every module/stylesheet
+                      request counts as cross-origin and is refused. It stays safe because the
+                      preview origin is port 8001 while the room is 5178: the frame gets its
+                      own origin's storage and nothing else, it cannot reach this document, and
+                      `/api` on 8000 refuses a foreign `Origin` header.
                     */}
                     {import.meta.env.PROD && !import.meta.env.VITE_PREVIEW_URL && !service?.remote ? (
                       <div className="pv-empty">
@@ -1429,7 +1480,7 @@ export default function Build() {
                       <iframe
                         key={frame}
                         title="preview"
-                        sandbox="allow-scripts allow-forms allow-popups allow-modals"
+                        sandbox="allow-scripts allow-forms allow-popups allow-modals allow-same-origin"
                         src={servedUrl(runId)}
                       />
                     )}
