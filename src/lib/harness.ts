@@ -407,10 +407,15 @@ export const SERVICE_BUSY: ServiceState[] = ["detecting", "installing", "buildin
 
 export type FileRow = { path: string; agent: string | null; lines: number; done?: boolean };
 
-export async function loadFiles(runId: string): Promise<{ files: FileRow[] }> {
-  const res = await fetch(`${API}/api/run/${runId}/files`);
-  if (!res.ok) return { files: [] };
-  return (await res.json()) as { files: FileRow[] };
+export async function loadFiles(runId: string): Promise<{ files: FileRow[] } | null> {
+  try {
+    const res = await fetch(`${API}/api/run/${runId}/files`);
+    // A transient failure must not look like "this run has no files".
+    if (!res.ok) return null;
+    return (await res.json()) as { files: FileRow[] };
+  } catch {
+    return null;
+  }
 }
 
 export async function loadFile(runId: string, path: string): Promise<string> {

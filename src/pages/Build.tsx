@@ -170,6 +170,7 @@ export default function Build() {
   // the operator's approval and put the room back into `needs_approval`.
   const serviceSeq = useRef(0);
   const startedKey = useRef<string | null>(null);
+  const autoBooted = useRef<string | null>(null);
 
   const totals = useMemo(() => {
     const list = Object.values(agents);
@@ -205,6 +206,7 @@ export default function Build() {
   useEffect(() => {
     runIdRef.current = runId;
     startedKey.current = null;
+    autoBooted.current = null;
   }, [runId]);
 
   // The room follows the roster. Hydration lands after the first paint, so a specialist
@@ -249,7 +251,8 @@ export default function Build() {
         }
       } catch (err) {
         if (seq === serviceSeq.current) {
-          setService(null);
+          // Keep the last preview on screen: a failed restart is not a reason to erase
+          // the page the operator was already looking at.
           setError(err instanceof Error ? err.message : "The harness did not answer — is it running on :8000?");
         }
       } finally {
@@ -285,7 +288,7 @@ export default function Build() {
   const shareRun = useCallback(async (id: string, approve = false) => {
     setShareBusy(true);
     try {
-      const next = await startShare(id, approve);
+      const next = await startShare(id, approve || autoApprove);
       setShare(next);
       if (next.state === "needs_approval") {
         setNotice(`Publishing this run will run: ${next.command ?? "the tunnel"}. Approve only if you mean it.`);
@@ -298,7 +301,7 @@ export default function Build() {
     } finally {
       setShareBusy(false);
     }
-  }, []);
+  }, [autoApprove]);
 
   const toggleAutoApprove = useCallback(() => {
     setAutoApprove((current) => {
@@ -320,6 +323,7 @@ export default function Build() {
     if (localStorage.getItem(approvedKey(runId)) !== "1") {
       localStorage.setItem(approvedKey(runId), "1");
     }
+    autoBooted.current = runId;
     await boot(runId, false, true);
     if (share?.state === "needs_approval") await shareRun(runId, true);
   }, [boot, runId, share?.state, shareRun]);
@@ -511,7 +515,10 @@ export default function Build() {
               ? "Run complete — checks clean and already previewed"
               : "Run complete — verified only: nothing has compiled it yet, the preview does that next",
           );
-          if (runIdRef.current) void boot(runIdRef.current, false, autoApprove);
+          if (runIdRef.current && autoBooted.current !== runIdRef.current) {
+            autoBooted.current = runIdRef.current;
+            void boot(runIdRef.current, false, autoApprove);
+          }
           break;
         case "error":
           setError(event.message);
@@ -651,6 +658,7 @@ export default function Build() {
   useEffect(() => {
     if (!runId || running || phase !== "done" || serviceState) return;
     if (localStorage.getItem(approvedKey(runId)) !== "1" && !autoApprove) return;
+    autoBooted.current = runId;
     setNotice("Restoring the preview you approved for this run.");
     void boot(runId, false, true);
   }, [autoApprove, runId, running, phase, serviceState, boot]);
@@ -685,6 +693,7 @@ export default function Build() {
     setAgents(seed(team));
     setStartedAt(Date.now());
     setFinishedAt(null);
+    autoBooted.current = null;
     setFiles([]);
     setTools([]);
     setFeed([]);
@@ -733,10 +742,11 @@ export default function Build() {
   const selectedFile = selected ?? scaffold[0] ?? "";
   const [peek, setPeek] = useState("");
 
+  const liveText = live[selectedFile] ?? "";
   useEffect(() => {
     if (!runId || !selectedFile) return;
-    if (live[selectedFile]) {
-      setPeek(live[selectedFile]);
+    if (liveText) {
+      setPeek(liveText);
       return;
     }
     let alive = true;
@@ -744,7 +754,7 @@ export default function Build() {
     return () => {
       alive = false;
     };
-  }, [runId, selectedFile, live]);
+  }, [runId, selectedFile, liveText]);
 
   const serviceNeedsApproval = serviceState === "needs_approval";
   const shareNeedsApproval = share?.state === "needs_approval";
@@ -1016,6 +1026,31 @@ export default function Build() {
               </i>
             </span>
           </div>
+
+          {!runId && !running && (
+            <div className="bld-hero">
+              <div className="bld-hero-copy">
+                <span>Command deck</span>
+                <h2>Tell the room what to ship.</h2>
+                <p>Plan, write, review and preview — one team, one run, every file accounted for.</p>
+              </div>
+              <div className="bld-hero-chips">
+                {["A developer portfolio", "A SaaS dashboard", "A FastAPI service", "A retro browser game"].map(
+                  (idea) => (
+                    <button
+                      key={idea}
+                      onClick={() => {
+                        setPrompt(idea);
+                        document.querySelector<HTMLTextAreaElement>(".bld-compose textarea")?.focus();
+                      }}
+                    >
+                      {idea}
+                    </button>
+                  ),
+                )}
+              </div>
+            </div>
+          )}
 
           <Office
             agents={views}

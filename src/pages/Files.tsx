@@ -26,10 +26,10 @@ export default function Files() {
     if (!runId) return;
     let alive = true;
     const pull = async () => {
-      const { files: next } = await loadFiles(runId);
-      if (!alive) return;
-      setFiles(next);
-      setSelected((current) => current || next[0]?.path || "");
+      const result = await loadFiles(runId);
+      if (!alive || !result) return;
+      setFiles(result.files);
+      setSelected((current) => current || result.files[0]?.path || "");
     };
     pull();
     const timer = setInterval(pull, 4000);
@@ -143,13 +143,13 @@ export default function Files() {
               </span>
             )}
             <div className="vault-view-actions">
-              {runId && selected && (
-                <a className="ghost-btn" href={`http://127.0.0.1:8000/preview/${runId}/${selected}`} target="_blank" rel="noreferrer">
-                  <Icon name="eye" size={13} /> Raw
-                </a>
+              {selected && (
+                <button className="ghost-btn" onClick={() => navigator.clipboard?.writeText(selected)}>
+                  <Icon name="link" size={13} /> Copy path
+                </button>
               )}
               <button className="ghost-btn" onClick={() => navigator.clipboard?.writeText(content)}>
-                <Icon name="download" size={13} /> Copy
+                <Icon name="download" size={13} /> Copy code
               </button>
             </div>
           </div>

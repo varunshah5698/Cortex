@@ -492,18 +492,23 @@ async def run_files(run_id: str) -> dict:
     if not workspace.exists():
         raise HTTPException(404, "unknown run")
     items = []
+    # A completed run also has node_modules, dist and harness state on disk. Listing
+    # those made the explorer look like thousands of files and hid the source tree.
+    skip = {"node_modules", "dist", "build", "out", ".git", ".venv", "__pycache__", ".next", "coverage"}
     for path in sorted(workspace.rglob("*")):
-        if path.is_file() and not path.name.startswith("."):
-            items.append(
-                {
-                    "path": str(path.relative_to(workspace)),
-                    "agent": None,
-                    "lines": path.read_text(encoding="utf-8", errors="replace").count("\n") + 1,
-                    "bytes": path.stat().st_size,
-                    "done": True,
-                    "revised": False,
-                }
-            )
+        relative = path.relative_to(workspace)
+        if not path.is_file() or any(part in skip or part.startswith(".") for part in relative.parts):
+            continue
+        items.append(
+            {
+                "path": str(relative),
+                "agent": None,
+                "lines": path.read_text(encoding="utf-8", errors="replace").count("\n") + 1,
+                "bytes": path.stat().st_size,
+                "done": True,
+                "revised": False,
+            }
+        )
     return {"files": items}
 
 
