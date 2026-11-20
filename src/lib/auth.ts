@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { API } from "./providers";
+import { signOut as signOutOfConvex, startGoogleSignIn } from "./cloud";
+import { saveToken } from "./convex";
 
 export type User = {
   id: string;
@@ -69,8 +71,18 @@ export function login(email: string, password: string): Promise<User> {
   });
 }
 
+/**
+ * Sign out of both stores.
+ *
+ * There are two sessions: the harness's `cortex_session` cookie and the Convex token in
+ * localStorage. Clearing only the cookie leaves the Convex token behind, so the next page
+ * load still reads as signed in to the data layer — signed out on screen, still holding a
+ * credential on disk. Both go, and the token is cleared even if the network call fails.
+ */
 export async function logout(): Promise<void> {
   try {
+    await signOutOfConvex().catch(() => undefined);
+    saveToken(null);
     await fetch(`${API}/api/auth/logout`, { method: "POST", credentials: "include" });
   } finally {
     window.dispatchEvent(new Event("cortex:auth"));
@@ -125,6 +137,61 @@ export function takeCallbackToken(): string | null {
   const clean = hash.slice(0, at) + (rest ? `?${rest}` : "");
   window.history.replaceState(null, "", `${window.location.pathname}${clean}`);
   return token;
+}
+
+/**
+ * Send the browser to Google, and let Convex finish the exchange.
+ *
+ * The redirect URI is registered against the Convex site, so the code-for-token exchange
+ * happens there and the client secret never reaches this bundle. All this does is ask for
+ * a state nonce and a URL, then hand the page over.
+ */
+export async function startGoogle(): Promise<void> {
+  const url = await startGoogleSignIn("/app");
+  window.location.assign(url);
+}
+
+let googleFinish: Promise<User | null> | null = null;
+
+async function finishGoogleOnce(): Promise<User | null> {
+  const hash = window.location.hash;
+  const at = hash.indexOf("?");
+  if (at !== -1) {
+    const params = new URLSearchParams(hash.slice(at + 1));
+    const failure = params.get("error");
+    if (failure) {
+      // Clear it, or a reload shows the same error forever.
+      params.delete("error");
+      const rest = params.toString();
+      const clean = `${window.location.pathname}${hash.slice(0, at)}${rest ? `?${rest}` : ""}`;
+      window.history.replaceState(null, "", clean);
+      throw new Error(failure);
+    }
+  }
+
+  const token = takeCallbackToken();
+  if (!token) return null;
+
+  // The bridge must succeed before the Convex token becomes durable. Otherwise a failed
+  // exchange leaves the browser holding half a login that the app cannot actually use.
+  const account = await adoptCloudSession(token);
+  saveToken(token);
+  return account;
+}
+
+/**
+ * Finish a Google sign-in that came back through the Convex callback.
+ *
+ * React Strict Mode runs effects twice in development. Reusing one promise makes the
+ * callback single-consumer: the first pass may clean up, but the second pass still waits
+ * for the same verified session instead of finding a token that was already removed.
+ *
+ * Returns the signed-in user, or null when this page load is not a callback. Throws with
+ * a readable message when the callback carried an error instead of a token.
+ */
+export function finishGoogle(): Promise<User | null> {
+  if (!googleFinish) googleFinish = finishGoogleOnce();
+  return googleFinish;
 }
 
 /**
