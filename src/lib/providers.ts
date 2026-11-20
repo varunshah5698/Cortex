@@ -109,8 +109,29 @@ export const API = import.meta.env.VITE_HARNESS_URL ?? (import.meta.env.PROD ? "
 /**
  * Generated pages get their own origin (`ai_harness/preview.py`), so a script a model
  * wrote is never same-origin with `/api`.
+ *
+ * The preview origin is the harness API's port + 1 by convention (8000→8001,
+ * 8096→8097). Hard-coding 8001 made a second checkout show `{"detail":"unknown run"}`:
+ * the room was talking to one harness while the iframe talked to another one's preview.
+ * A deployment that places the preview elsewhere sets VITE_PREVIEW_URL.
  */
-export const PREVIEW = "http://127.0.0.1:8001";
+function previewOrigin(api: string): string {
+  const explicit = import.meta.env.VITE_PREVIEW_URL;
+  if (explicit) return explicit.replace(/\/$/, "");
+  // A production build is served by the harness itself. There is no second loopback
+  // port in the browser's world; a deployment with a preview proxy sets the variable.
+  if (import.meta.env.PROD) return window.location.origin;
+  try {
+    const url = new URL(api || window.location.origin);
+    const port = Number(url.port || (url.protocol === "https:" ? 443 : 80));
+    url.port = String(port + 1);
+    return url.origin;
+  } catch {
+    return "http://127.0.0.1:8001";
+  }
+}
+
+export const PREVIEW = previewOrigin(API);
 
 /**
  * What the harness will tell us about a specialist: everything except the key.
