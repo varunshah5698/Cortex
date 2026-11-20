@@ -83,13 +83,17 @@ export const roleColor = (role: Role) =>
     general: "#7b7288",
   })[role] ?? "#7b7288";
 
-/** Four specialists so the workshop opens with a working team. */
+/**
+ * Four specialists so the workshop opens with a team that actually runs: all local,
+ * because a default roster that needs three keys is not a working default. Any card can
+ * be pointed at a hosted provider the moment its key exists.
+ */
 export function defaultRoster(): Specialist[] {
   return [
     { id: "atlas", name: "Atlas", role: "planner", kind: "ollama", baseUrl: providers.ollama.baseUrl, apiKey: "", model: providers.ollama.model },
-    { id: "vega", name: "Vega", role: "frontend", kind: "openai", baseUrl: providers.openai.baseUrl, apiKey: "", model: providers.openai.model },
-    { id: "orion", name: "Orion", role: "backend", kind: "anthropic", baseUrl: providers.anthropic.baseUrl, apiKey: "", model: providers.anthropic.model },
-    { id: "lyra", name: "Lyra", role: "reviewer", kind: "openrouter", baseUrl: providers.openrouter.baseUrl, apiKey: "", model: providers.openrouter.model },
+    { id: "vega", name: "Vega", role: "frontend", kind: "ollama", baseUrl: providers.ollama.baseUrl, apiKey: "", model: providers.ollama.model },
+    { id: "orion", name: "Orion", role: "backend", kind: "ollama", baseUrl: providers.ollama.baseUrl, apiKey: "", model: providers.ollama.model },
+    { id: "lyra", name: "Lyra", role: "reviewer", kind: "ollama", baseUrl: providers.ollama.baseUrl, apiKey: "", model: providers.ollama.model },
   ];
 }
 

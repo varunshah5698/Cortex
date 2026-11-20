@@ -194,10 +194,10 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
         # Separation is the point: the model that wrote the plan is its worst judge.
         critique = ""
         if run.depth == "deep" and REASONING_CRITIC:
-            critic = next(
-                (s for s in run.specialists if s.role == "reviewer" and s.id != agent.id),
-                agent,
-            )
+            # Prefer a dedicated reviewer; with none configured, another specialist is
+            # still a better critic than the author grading their own plan.
+            critic = next((s for s in run.specialists if s.role == "reviewer" and s.id != agent.id), None)
+            critic = critic or next((s for s in run.specialists if s.id != agent.id), agent)
             await run.emit({"type": "status", "agent": critic.id, "status": "thinking"})
             critique, critic_usage = await executor.critique(
                 critic,
