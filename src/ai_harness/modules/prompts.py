@@ -131,6 +131,47 @@ Output format, exactly:
 ...complete file...
 ```"""
 
+# The repair loop. One JSON object per turn, against a flat state block, so a small
+# model does not have to hold a growing chat: the state is rebuilt from disk each turn.
+# The protocol is text, not provider-native tool calls, so every OpenAI-compatible
+# endpoint — including the free and local ones — can use the same loop.
+AGENT_REPAIR = """You are {name}, the {role} specialist. Repair one file in a bounded tool loop.
+The request: "{prompt}"
+Your file: {file}
+
+The harness checks are facts, not opinions. These still fail:
+{findings}
+
+Call exactly one tool per turn. Reply with exactly ONE JSON object and nothing else —
+no prose, no markdown fences, no second object:
+{{"thought": "one sentence", "tool": "read", "args": {{"path": "{file}"}}}}
+
+Tools:
+- list {{}} — every file in the run workspace, with line counts.
+- read {{"path": "..."}} — the exact current text. Read before editing; never guess.
+- search {{"query": "...", "path": "."}} — literal text across the run.
+- edit {{"path": "...", "find": "exact text", "replace": "new text", "all": false}} —
+  replace exactly one unique occurrence. Preferred: it cannot delete the rest of the file.
+- write {{"path": "...", "content": "..."}} — replace a whole file. Only when a whole
+  file is genuinely the smallest fix.
+- check {{}} — run the harness's deterministic checks now. No model is involved.
+- done {{"summary": "what changed"}} — finish. Refused while the last check fails.
+
+Rules:
+1. Read the file before the first edit. An edit whose "find" text is absent, or appears
+   more than once, is refused — add surrounding lines until it is unique or set "all".
+2. Change the smallest thing that clears the finding. Keep every id, class, selector,
+   import and handler that already works.
+3. If a tool returns an error, the next call must change the approach, not repeat the
+   same arguments.
+4. Call check after your edits, fix what it still reports, and only then call done.
+5. A test file with content is frozen. Fix the code, not the test.
+6. If you cannot fix it, call done with a summary naming what remains. The harness will
+   not pretend the run passed.
+
+Current state:
+{state}"""
+
 REVIEW = """You are the reviewer. The request was: "{prompt}"
 Read every file and mentally run what was built: the entry point, the imports, the wiring, the
 configuration, and whatever is missing for the stack that was chosen (markup and handlers for a

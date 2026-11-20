@@ -7,9 +7,10 @@ import posixpath
 import re
 
 from ..agents import executor, reviewer
+from ..config.settings import AGENT_LOOP
 from ..core.state import RunState
 from ..models import Specialist, WorkUnit
-from ..modules import llm, progress, prompts
+from ..modules import agent_loop, llm, progress, prompts, thrash
 from ..nodes import execution, verify
 
 
@@ -240,13 +241,64 @@ async def wire(run: RunState) -> list[str]:
     return changes
 
 
-async def _revise_all(run: RunState, agent: Specialist, units: list[WorkUnit], findings: str, think) -> None:
+async def _revise_all(
+    run: RunState,
+    agent: Specialist,
+    units: list[WorkUnit],
+    findings: str,
+    think,
+    use_loop: bool = True,
+) -> None:
     """Rewrite in parallel, except on a local runner where calls queue anyway."""
+
+    async def one(unit: WorkUnit) -> None:
+        # The 5-argument call is the old signature tests monkeypatch; only the fallback
+        # path (which must not re-enter the loop it just failed) passes the extra flag.
+        if use_loop:
+            await revise(run, agent, unit, findings, think)
+        else:
+            await revise(run, agent, unit, findings, think, use_loop=False)
+
     if all(spec.is_local for spec in run.specialists):
         for unit in units:
-            await revise(run, agent, unit, findings, think)
+            await one(unit)
         return
-    await asyncio.gather(*(revise(run, agent, unit, findings, think) for unit in units))
+    await asyncio.gather(*(one(unit) for unit in units))
+
+
+async def _agent_repair(run: RunState, targets: list[WorkUnit], findings: str) -> set[str]:
+    """Let each author repair its own file with tools. Returns the paths worth keeping.
+
+    A path is returned only when the loop actually changed the file. A model that cannot
+    produce a usable tool call returns nothing, so the caller still has the whole-file
+    rewrite as a fallback — the loop is an upgrade, not a new way to get stuck.
+    """
+
+    async def one(unit: WorkUnit) -> str | None:
+        author = next((s for s in run.specialists if s.id == unit.agent), run.specialists[0])
+        await run.emit({"type": "status", "agent": author.id, "status": "thinking"})
+        try:
+            changed = await agent_loop.repair(
+                run,
+                author,
+                unit.file,
+                findings,
+                lambda: verify.run(run, "agent-check"),
+            )
+        except llm.ProviderError as exc:
+            await run.emit({"type": "error", "agent": author.id, "message": str(exc)})
+            changed = False
+        except thrash.Thrash as exc:
+            await run.emit({"type": "error", "agent": author.id, "message": str(exc)})
+            changed = False
+        await run.emit({"type": "status", "agent": author.id, "status": "done" if changed else "idle"})
+        return unit.file if changed else None
+
+    # One writer at a time: every loop checks the same tree, so running two in parallel
+    # would let one agent's partial edit appear in the other's check. The steps are
+    # bounded and each call is small; correctness is worth the serialization.
+    results = [await one(unit) for unit in targets]
+    return {path for path in results if path}
 
 
 async def repair(run: RunState, agent: Specialist, units: list[WorkUnit], rounds: int = 1) -> dict:
@@ -290,18 +342,65 @@ async def repair(run: RunState, agent: Specialist, units: list[WorkUnit], rounds
                 "kind": "review",
             }
         )
-        await _revise_all(run, agent, targets, findings, think)
+        handled = await _agent_repair(run, targets, findings) if AGENT_LOOP else set()
+        remaining = [unit for unit in targets if unit.file not in handled]
+        if remaining:
+            # A model that could not use the loop still gets the old path. Nothing is
+            # left un-repaired merely because the tool protocol was too much for it —
+            # and this path does not re-enter the loop it just failed.
+            await _revise_all(run, agent, remaining, findings, think, use_loop=False)
         report = await verify.run(run, "post-repair")
     run.verification = report
     return report
 
 
-async def revise(run: RunState, reviewer_agent: Specialist, unit: WorkUnit, findings: str, think) -> None:
+async def revise(
+    run: RunState,
+    reviewer_agent: Specialist,
+    unit: WorkUnit,
+    findings: str,
+    think,
+    use_loop: bool = True,
+) -> None:
     author = next((s for s in run.specialists if s.id == unit.agent), run.specialists[0])
     meta = run.files.get(unit.file)
     if not meta:
         return
     current = str(meta.get("content", "")).strip()
+
+    # A review finding is usually one broken name. Let the author read the actual file
+    # and patch that name, instead of paying for a Q&A and a full regeneration. A model
+    # that cannot speak the tool protocol returns False and the old rewrite still runs.
+    if AGENT_LOOP and use_loop:
+        await run.emit({"type": "status", "agent": author.id, "status": "thinking"})
+        try:
+            changed = await agent_loop.repair(
+                run,
+                author,
+                unit.file,
+                findings,
+                lambda: verify.run(run, "agent-check"),
+            )
+        except llm.ProviderError as exc:
+            await run.emit({"type": "error", "message": str(exc), "agent": author.id})
+            changed = False
+        except thrash.Thrash as exc:
+            await run.emit({"type": "error", "message": str(exc), "agent": author.id})
+            changed = False
+        if changed:
+            unit.status = "revised"
+            progress.tick(run, unit.file)
+            await run.emit({"type": "status", "agent": author.id, "status": "done"})
+            await run.emit(
+                {
+                    "type": "message",
+                    "from": author.id,
+                    "text": f"Repaired {unit.file} with the tool loop after review.",
+                    "kind": "revise",
+                }
+            )
+            return
+
     try:
         await run.emit({"type": "status", "agent": author.id, "status": "talking"})
         asked, ask_usage = await reviewer.question(reviewer_agent, author.name, unit.file, findings[:700])

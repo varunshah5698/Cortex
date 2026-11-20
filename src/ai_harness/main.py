@@ -30,6 +30,8 @@ from pydantic import BaseModel, Field
 
 from . import paths, preview
 from .config.settings import (
+    AGENT_LOOP,
+    AGENT_STEPS,
     CACHE_ENABLED,
     DIST_DIR,
     KEYS_FILE,
@@ -305,7 +307,12 @@ async def health() -> dict:
             "queued": harness.pending(),
             "concurrency": harness.concurrency,
         },
-        "limits": {"max_tokens": MAX_RUN_TOKENS, "max_usd": MAX_RUN_USD, "retry_attempts": RETRY_ATTEMPTS},
+        "limits": {
+            "max_tokens": MAX_RUN_TOKENS,
+            "max_usd": MAX_RUN_USD,
+            "retry_attempts": RETRY_ATTEMPTS,
+            "agent_loop": {"enabled": AGENT_LOOP, "steps": AGENT_STEPS},
+        },
         # What the dollar cap is actually computed from: a roster model with no row would
         # make `max_usd` a guess, so it is named here rather than discovered on an invoice.
         "pricing": budget.report(ROSTER.load()),
@@ -564,6 +571,10 @@ async def serve_start(run_id: str, restart: bool = False, approve: bool = False)
     # The run's own event stream receives the install/build/serve calls as `tool` events,
     # so a failed install is visible in `events.jsonl` and not only in the service log.
     run = harness.get(run_id)
+    if run is not None and not run.done:
+        # Building a half-written tree is how an empty package.json became a "failed
+        # build". The preview is a verdict on finished work, not a progress bar.
+        raise HTTPException(409, "the run is still writing files; wait for it to finish before building")
     service = await runner.start(
         run_id,
         workspace,

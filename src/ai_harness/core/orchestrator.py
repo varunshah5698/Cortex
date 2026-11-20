@@ -124,14 +124,49 @@ class Orchestrator:
             await self.run.emit({"type": "start", "prompt": self.run.prompt, "created": self.run.created})
             event_log(self.run.run_id, "start", prompt=self.run.prompt, depth=self.run.depth)
 
+            # A local daemon that is not running cannot write a file; fail before the
+            # planner spends three minutes discovering that.
+            for spec in self.run.specialists:
+                if not spec.is_local:
+                    continue
+                ok, detail = await llm.reachable(spec)
+                if ok:
+                    continue
+                message = (
+                    f"{spec.name}: the local provider at {spec.baseUrl} is not answering "
+                    f"({detail}). Start it (for example `ollama serve`), then run again."
+                )
+                event_log(self.run.run_id, "error", error=message)
+                failures.record(self.run, None, message)
+                await self.run.emit({"type": "error", "message": message, "agent": spec.id})
+                return
+
+            all_local = all(spec.is_local for spec in self.run.specialists)
             units, files, questions = await planning.run(self.run, planner)
             self.run.units = units
 
-            if self.run.depth != "quick":
+            if self.run.depth != "quick" and not all_local:
                 researcher = self.pick("research", "planner")
                 self.notes = await research.run(self.run, researcher, questions)
+            elif self.run.depth != "quick":
+                await self.run.emit(
+                    {
+                        "type": "message",
+                        "from": "harness",
+                        "kind": "notice",
+                        "text": (
+                            "Local team: research and contracts are skipped so the models "
+                            "spend their time writing files; one file is built at a time."
+                        ),
+                    }
+                )
 
-            await execution.run(self.run, units, self.notes, negotiate_first=self.run.depth != "quick")
+            await execution.run(
+                self.run,
+                units,
+                self.notes,
+                negotiate_first=self.run.depth != "quick" and not all_local,
+            )
             await self.conclude(units, reviewer_agent)
         except asyncio.CancelledError:
             self.persist_metrics()

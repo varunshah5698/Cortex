@@ -84,6 +84,10 @@ class _Bucket:
 
 
 _buckets: dict[tuple[str, str], _Bucket] = {}
+# A local daemon runs one generation at a time. Four contract calls fired at once used to
+# queue inside Ollama (and could take the daemon down with them); this lock makes the
+# harness wait its turn instead. Hosted providers keep their concurrency.
+_local_locks: dict[tuple[str, str], asyncio.Lock] = {}
 
 
 async def _throttle(spec: Specialist) -> None:
@@ -92,6 +96,17 @@ async def _throttle(spec: Specialist) -> None:
     if bucket is None:
         bucket = _buckets[key] = _Bucket(PROVIDER_RATE_LIMIT)
     await bucket.take()
+
+
+def _local_lock(spec: Specialist) -> asyncio.Lock | None:
+    """One lock per local endpoint+model: the daemon serves one request at a time."""
+    if not spec.is_local:
+        return None
+    key = ((spec.baseUrl or "").rstrip("/"), spec.model or "")
+    lock = _local_locks.get(key)
+    if lock is None:
+        lock = _local_locks[key] = asyncio.Lock()
+    return lock
 
 
 # ---------- shared helpers ----------
@@ -340,6 +355,9 @@ async def _ollama(
         "messages": _messages(messages),
         "stream": True,
         "think": bool(think),
+        # A multi-file build calls the same model for minutes; do not pay a reload between
+        # calls. One hour is longer than any bounded run.
+        "keep_alive": "1h",
         "options": {"temperature": temperature},
     }
     if json_mode:
@@ -403,6 +421,21 @@ def protocol(spec: Specialist) -> str:
     return "openai"
 
 
+async def reachable(spec: Specialist) -> tuple[bool, str]:
+    """Can this provider answer right now? A local daemon that is down is not a retry."""
+    base = _base(spec)
+    if not base or not spec.model:
+        return False, "no base URL or model"
+    if not spec.is_local:
+        return True, ""
+    url = _native_ollama_url(base).replace("/api/chat", "/api/tags") if protocol(spec) == "ollama" else f"{base}/models"
+    try:
+        response = await client().get(url, timeout=3.0)
+        return response.status_code < 500, f"HTTP {response.status_code}"
+    except httpx.HTTPError as exc:
+        return False, type(exc).__name__
+
+
 async def stream(
     spec: Specialist,
     messages: list[dict[str, str]],
@@ -423,9 +456,20 @@ async def stream(
     await _throttle(spec)
 
     handler = HANDLERS[protocol(spec)]
-    try:
+
+    async def produce() -> AsyncIterator[tuple[str, str]]:
         async for item in handler(spec, messages, think, temperature, json_mode, stats):
             yield item
+
+    lock = _local_lock(spec)
+    try:
+        if lock is None:
+            async for item in produce():
+                yield item
+        else:
+            async with lock:
+                async for item in produce():
+                    yield item
     except httpx.HTTPError as exc:
         # A read timeout mid-stream used to reach the run as a bare `ReadTimeout:` with
         # no agent and no endpoint; name both so the UI says what actually failed.

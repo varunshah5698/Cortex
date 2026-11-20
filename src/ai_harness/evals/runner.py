@@ -40,8 +40,9 @@ BASELINE = Path(ROOT) / "evals" / "baseline.json"
 
 
 def scripted_team() -> list[Specialist]:
-    """Four local specialists; the scripted provider ignores the endpoint entirely."""
-    base = "http://127.0.0.1:9/v1"
+    """Four scripted specialists. A non-loopback base keeps the full pipeline (research
+    and contracts included) in the eval; `Scripted` answers before any socket opens."""
+    base = "http://eval.invalid/v1"
     return [
         Specialist(id="eval-planner", name="Atlas", role="planner", kind="openai", baseUrl=base, model="scripted"),
         Specialist(id="eval-front", name="Vega", role="frontend", kind="openai", baseUrl=base, model="scripted"),
@@ -139,17 +140,20 @@ async def run_case(
     else:
         scripted = Scripted(case)
         original_call, original_stream = llm.call, llm.stream
-        original_research = web_search.research
+        original_research, original_reachable = web_search.research, llm.reachable
 
         async def no_research(_queries, log=None):  # noqa: ANN001 - matches web_search.research
             return [], []
 
-        llm.call, llm.stream = scripted.call, scripted.stream
+        async def reachable(_spec):  # noqa: ANN001 - the scripted provider has no endpoint
+            return True, ""
+
+        llm.call, llm.stream, llm.reachable = scripted.call, scripted.stream, reachable
         web_search.research = no_research
         try:
             await Orchestrator(run).run_all()
         finally:
-            llm.call, llm.stream = original_call, original_stream
+            llm.call, llm.stream, llm.reachable = original_call, original_stream, original_reachable
             web_search.research = original_research
         calls = scripted.calls
 

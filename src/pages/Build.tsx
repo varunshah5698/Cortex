@@ -193,9 +193,9 @@ export default function Build() {
     setLogsOpen(true);
     try {
       setService(await startService(id, restart, approve));
-    } catch {
+    } catch (err) {
       setService(null);
-      setNotice("The harness did not answer — is it running on :8000?");
+      setNotice(err instanceof Error ? err.message : "The harness did not answer — is it running on :8000?");
     }
   }, []);
 
@@ -649,10 +649,18 @@ export default function Build() {
                         ) : (
                           <button
                             className="pv-btn"
+                            disabled={running}
                             onClick={() => void boot(runId, serviceState === "ready")}
-                            title={serviceState === "ready" ? "Stop, then install, build and serve again" : "Install, build and serve"}
+                            title={
+                              running
+                                ? "Wait until the team has written every file"
+                                : serviceState === "ready"
+                                  ? "Stop, then install, build and serve again"
+                                  : "Install, build and serve"
+                            }
                           >
-                            <Icon name="send" size={11} /> {serviceState === "ready" ? "Restart" : "Run"}
+                            <Icon name="send" size={11} />{" "}
+                            {running ? "Writing files…" : serviceState === "ready" ? "Restart" : "Run"}
                           </button>
                         )}
                         <button onClick={() => setFrame((v) => v + 1)} title="Reload">

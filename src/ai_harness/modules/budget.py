@@ -43,6 +43,10 @@ class BudgetExceeded(RuntimeError):
 
 # (substring, usd per 1M input tokens, usd per 1M output tokens)
 TABLE: list[tuple[str, float, float]] = [
+    # The offline eval model: no socket, no tokens, no bill. The non-loopback base URL
+    # keeps the full pipeline (research and contracts) in the eval, so it needs an
+    # explicit free row rather than the local-endpoint exemption.
+    ("scripted", 0.0, 0.0),
     ("gpt-4.1-mini", 0.40, 1.60),
     ("gpt-4.1", 2.00, 8.00),
     ("gpt-4o-mini", 0.15, 0.60),
@@ -52,6 +56,8 @@ TABLE: list[tuple[str, float, float]] = [
     ("claude-opus-4", 15.00, 75.00),
     ("gemini-2.0-flash", 0.10, 0.40),
     ("gemini-2.5-pro", 1.25, 10.00),
+    # The eval suite's deterministic stand-in: it never reaches a provider.
+    ("scripted", 0.0, 0.0),
 ]
 
 DEFAULT_INPUT = float(os.getenv("HARNESS_PRICE_INPUT", "0.5"))

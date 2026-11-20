@@ -99,7 +99,9 @@ MAX_OUTPUT_TOKENS = _int("HARNESS_MAX_OUTPUT_TOKENS", 4096)
 MAX_FILE_LINES = _int("HARNESS_MAX_FILE_LINES", 900)
 
 # Wall-clock and concurrency control. A run is bounded in time as well as in money.
-MAX_RUN_SECONDS = _float("HARNESS_MAX_SECONDS", 900.0)
+# Local models make one call at a time and a multi-file build is a dozen calls; an hour
+# is the ceiling that still lets a local run finish. Hosted runs are bounded by tokens/$.
+MAX_RUN_SECONDS = _float("HARNESS_MAX_SECONDS", 3600.0)
 MAX_CONCURRENT_RUNS = max(1, _int("HARNESS_MAX_CONCURRENT_RUNS", 2))
 MAX_QUEUED_RUNS = max(0, _int("HARNESS_MAX_QUEUED_RUNS", 8))
 MAX_LIVE_RUNS = max(4, _int("HARNESS_MAX_LIVE_RUNS", 24))
@@ -112,6 +114,18 @@ MAX_REVISION_ROUNDS = max(0, _int("HARNESS_MAX_REVISION_ROUNDS", 2))
 # A run may not finish on a failing check: after the review's own revision pass the
 # orchestrator allows this many repair rounds before it refuses to emit `done`.
 REPAIR_ROUNDS = max(0, _int("HARNESS_REPAIR_ROUNDS", 1))
+
+# The repair agent loop: a specialist fixes a failing check with tools (read, edit,
+# check) instead of rewriting the whole file blind. It is on by default because a
+# targeted edit is cheaper and safer than a second full generation; the old rewrite is
+# still the fallback when a model cannot produce a usable tool call.
+AGENT_LOOP = _bool("HARNESS_AGENT_LOOP", True)
+AGENT_STEPS = max(1, _int("HARNESS_AGENT_STEPS", 8))
+# The prompt is rebuilt each turn from a flat state block, not from a growing chat, so
+# this is the whole working set: ledger + active files + observations.
+AGENT_CONTEXT_CHARS = max(4000, _int("HARNESS_AGENT_CONTEXT_CHARS", 12000))
+AGENT_OBSERVATION_CHARS = max(500, _int("HARNESS_AGENT_OBSERVATION_CHARS", 4000))
+AGENT_ACTIVE_FILES = max(1, _int("HARNESS_AGENT_ACTIVE_FILES", 2))
 
 # Memory hygiene: the event log is streamed to disk and only a window stays resident.
 EVENT_MEMORY_LIMIT = max(200, _int("HARNESS_EVENT_MEMORY", 4000))
