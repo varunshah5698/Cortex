@@ -33,7 +33,7 @@ and is reported by `GET /api/health`.
 `modules/permissions.py` holds an ordered rule table — deny, then ask, then allow — and a
 command that matches no rule is **denied**, so a new capability is a deliberate rule rather
 than an assumption. `denied_path()` refuses credentials and the harness's own trust store
-(`.env`, `.harness-token`, `.harness-roster.json`, keys, `secrets/*`) even inside an
+(`.env`, `.harness-token`, `.harness-roster.json`, `.harness-keys.json`, keys, `secrets/*`) even inside an
 allowed command. The decision for a whole pipeline is made before the first spawn:
 `Service.plan()` lists what would run, `Service.start()` stops at `needs_approval`, and
 `_spawn()` re-checks every command as defence in depth.

@@ -93,3 +93,9 @@ def test_a_key_from_an_older_roster_file_migrates_to_the_keyring(tmp_path):
     store = RosterStore(roster, keys)
     assert store.get("vega").apiKey == "sk-old"
     assert json.loads(keys.read_text(encoding="utf-8"))[provider_identity(spec())] == "sk-old"
+
+
+def test_the_keyring_is_a_denied_path_for_model_tools():
+    from ai_harness.modules.permissions import DENY_PATHS
+
+    assert ".harness-keys.json" in DENY_PATHS
