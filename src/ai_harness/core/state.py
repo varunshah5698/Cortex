@@ -41,6 +41,9 @@ class RunState:
     files: dict[str, dict] = field(default_factory=dict)
     units: list[WorkUnit] = field(default_factory=list)
     usage: dict[str, Usage] = field(default_factory=dict)
+    # Who spent it, including agents that are no longer on the current team. A resume
+    # replaces `specialists`; without this the earlier calls disappear from the ledger.
+    agent_history: dict[str, Specialist] = field(default_factory=dict)
     contracts: dict[str, str] = field(default_factory=dict)
     sources: list[dict] = field(default_factory=list)
     done: bool = False
@@ -114,6 +117,7 @@ class RunState:
     def track_usage(self, agent: Specialist, phase: str, usage: Usage) -> dict:
         ledger = self.usage.setdefault(agent.id, Usage())
         ledger.add(usage)
+        self.agent_history[agent.id] = agent
         self.cache_hits += usage.cached
         return {
             "type": "usage",
@@ -143,7 +147,11 @@ class RunState:
     def metrics(self) -> dict:
         totals = Usage()
         per_agent = []
-        for agent in self.specialists:
+        agents = {spec.id: spec for spec in self.specialists}
+        for agent_id in self.usage:
+            if agent_id not in agents and agent_id in self.agent_history:
+                agents[agent_id] = self.agent_history[agent_id]
+        for agent in agents.values():
             ledger = self.usage.get(agent.id)
             if not ledger:
                 continue
@@ -224,6 +232,52 @@ def restore_run(run_id: str) -> RunState | None:
     run.events = events
     run.answer = str(finished.get("answer") or "")
     run.done = any(event.get("type") in TERMINAL_EVENTS for event in events)
+
+    # Rebuild the ledger from its own events. A resumed run used to show only the calls
+    # made after the resume, which made a 78k-token build look like a 1k chat.
+    for event in events:
+        if event.get("type") != "usage":
+            continue
+        agent_id = str(event.get("agent") or "")
+        if not agent_id:
+            continue
+        ledger = run.usage.setdefault(agent_id, Usage())
+        ledger.prompt_tokens += int(event.get("prompt_tokens") or 0)
+        ledger.completion_tokens += int(event.get("completion_tokens") or 0)
+        ledger.ms += int(event.get("ms") or 0)
+        ledger.calls += int(event.get("calls") or 0)
+        ledger.thinking_chars += int(event.get("thinking_chars") or 0)
+        ledger.cost_usd = round(ledger.cost_usd + float(event.get("cost_usd") or 0), 6)
+        ledger.cached += int(event.get("cached") or 0)
+        ledger.estimated = ledger.estimated or bool(event.get("estimated"))
+        run.agent_history.setdefault(
+            agent_id,
+            Specialist(
+                id=agent_id,
+                name=str(event.get("name") or agent_id),
+                role=str(event.get("role") or "general"),
+                model=str(event.get("model") or ""),
+            ),
+        )
+
+    # The file count is part of the ledger too; a restored run used to report zero files.
+    for path in workspace.rglob("*"):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(workspace).as_posix()
+        if any(part in ("node_modules", "dist", "build", "out", ".git") for part in path.parts):
+            continue
+        if relative in (
+            ".harness-metrics.json",
+            ".harness-plan.json",
+            ".harness-receipt.json",
+            EVENT_LOG,
+            "RECEIPT.md",
+            "todo.md",
+        ):
+            continue
+        content = path.read_text(encoding="utf-8", errors="replace")
+        run.files[relative] = {"agent": None, "content": content, "done": bool(content.strip())}
     # What the preview did happens *after* the terminal event, so it only exists in the
     # ledger: rebuilding from the event log alone would quietly reset a served run to
     # "verified, never compiled".

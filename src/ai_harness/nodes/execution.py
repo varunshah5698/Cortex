@@ -236,6 +236,7 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
                         reasoning=context.clip(reasoning, 700),
                         critique=context.clip(critique, 700) or "(no reviewer pass for this run)",
                         contracts=peers,
+                        peer_files=context.files_context(run.files, exclude=unit.file),
                         progress=progress.orient(run),
                     ),
                 },

@@ -10,7 +10,7 @@ from ..agents import executor, reviewer
 from ..config.settings import AGENT_LOOP
 from ..core.state import RunState
 from ..models import Specialist, WorkUnit
-from ..modules import agent_loop, llm, progress, prompts, thrash
+from ..modules import agent_loop, context, llm, progress, prompts, thrash
 from ..nodes import execution, verify
 
 
@@ -442,6 +442,7 @@ async def revise(
                         reasoning=deliberation or answered,
                         critique=findings[:700],
                         contracts=run.contracts.get(author.id, ""),
+                        peer_files=context.files_context(run.files, exclude=unit.file),
                         progress=progress.orient(run),
                     ),
                 },

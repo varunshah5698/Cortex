@@ -90,7 +90,7 @@ PORT = _int("HARNESS_PORT", 8000)
 MAX_UNITS = max(1, _int("HARNESS_MAX_UNITS", 8))
 MAX_RESEARCH_QUERIES = _int("HARNESS_MAX_RESEARCH_QUERIES", 3)
 MAX_RESEARCH_PAGES = _int("HARNESS_MAX_RESEARCH_PAGES", 2)
-REASONING_WORDS = _int("HARNESS_REASONING_WORDS", 320)
+REASONING_WORDS = _int("HARNESS_REASONING_WORDS", 700)
 # A second, adversarial read of the plan before code is written. It costs one call per
 # file and catches broken wiring on paper; deep runs keep it on by default.
 REASONING_CRITIC = _bool("HARNESS_REASONING_CRITIC", True)
@@ -101,7 +101,7 @@ MAX_FILE_LINES = _int("HARNESS_MAX_FILE_LINES", 900)
 # Wall-clock and concurrency control. A run is bounded in time as well as in money.
 # Local models make one call at a time and a multi-file build is a dozen calls; an hour
 # is the ceiling that still lets a local run finish. Hosted runs are bounded by tokens/$.
-MAX_RUN_SECONDS = _float("HARNESS_MAX_SECONDS", 3600.0)
+MAX_RUN_SECONDS = _float("HARNESS_MAX_SECONDS", 7200.0)
 MAX_CONCURRENT_RUNS = max(1, _int("HARNESS_MAX_CONCURRENT_RUNS", 2))
 MAX_QUEUED_RUNS = max(0, _int("HARNESS_MAX_QUEUED_RUNS", 8))
 MAX_LIVE_RUNS = max(4, _int("HARNESS_MAX_LIVE_RUNS", 24))
@@ -187,10 +187,6 @@ if not _public_url and os.getenv("RENDER_EXTERNAL_HOSTNAME"):
 PUBLIC_ORIGIN = _public_url.strip().rstrip("/")
 if PUBLIC_ORIGIN and PUBLIC_ORIGIN not in ORIGINS:
     ORIGINS.append(PUBLIC_ORIGIN)
-
-# Optional HTTP Basic auth for a public deployment: "user:password", or a bare password
-# (username "cortex"). Unset means open, which is only safe on loopback.
-BASIC_AUTH = os.getenv("HARNESS_BASIC_AUTH", "").strip()
 
 # Local providers (Ollama, a local vLLM) are a supported feature, so loopback and
 # RFC1918 hosts are allowed by default. Set HARNESS_ALLOW_LOCAL_PROVIDERS=0 on a shared

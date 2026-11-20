@@ -34,6 +34,8 @@ Rules:
 - A visual page needs a stylesheet in the plan (`src/index.css` or the component's own CSS)
   and the entry must import it. Inline-only styling is the last resort, not the default;
   the harness already provides a baseline, so extend it instead of undoing it.
+- A page with three or more distinct sections gets one component per section plus a page
+  and a stylesheet. Do not put an entire site in one file and call it done.
 - The files must fit together: the entry file imports the others by those exact paths.
 - Roles: markup, styling and UI are frontend; logic, data, entry wiring and manifests are backend.
 - A React request gets .tsx/.jsx, a Python request gets .py, a CLI gets .ts or .go — match the request.
@@ -135,6 +137,9 @@ suggestion, and correct the plan before you write:
 
 Peer interfaces:
 {contracts}
+
+Peer files already written — keep their ids, classes, imports and handlers consistent:
+{peer_files}
 
 {progress}
 

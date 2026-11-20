@@ -28,6 +28,25 @@ def peer_context(contracts: dict[str, str]) -> str:
     return "\n".join(f"- {name}: {clip(text, 120)}" for name, text in contracts.items())
 
 
+def files_context(files: dict[str, dict], exclude: str = "", max_files: int = 4, tokens: int = 320) -> str:
+    """What the peers actually wrote, not only what they promised.
+
+    A specialist that sees the real markup and selectors keeps them; one that sees only
+    a contract invents a second copy. Bodies are clipped, so this is context, not a dump.
+    """
+    chosen: list[str] = []
+    for path in sorted(files):
+        if path == exclude or path in ("todo.md", "RECEIPT.md"):
+            continue
+        content = str((files.get(path) or {}).get("content") or "").strip()
+        if not content:
+            continue
+        chosen.append(f"--- {path} ---\n{clip(content, tokens)}")
+        if len(chosen) >= max_files:
+            break
+    return "\n\n".join(chosen) or "No peer file has been written yet."
+
+
 def notes_context(notes: list[str]) -> str:
     """Research notes for a writer prompt — fenced, because a page wrote most of them."""
     if not notes:

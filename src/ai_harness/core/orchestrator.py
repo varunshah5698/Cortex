@@ -165,27 +165,27 @@ class Orchestrator:
             units, files, questions = await planning.run(self.run, planner)
             self.run.units = units
 
-            if self.run.depth != "quick" and not all_local:
+            if self.run.depth != "quick":
                 researcher = self.pick("research", "planner")
                 self.notes = await research.run(self.run, researcher, questions)
-            elif self.run.depth != "quick":
-                await self.run.emit(
-                    {
-                        "type": "message",
-                        "from": "harness",
-                        "kind": "notice",
-                        "text": (
-                            "Local team: research and contracts are skipped so the models "
-                            "spend their time writing files; one file is built at a time."
-                        ),
-                    }
-                )
+                if all_local:
+                    await self.run.emit(
+                        {
+                            "type": "message",
+                            "from": "harness",
+                            "kind": "notice",
+                            "text": (
+                                "Deep local crew: research and contracts run too; every call "
+                                "is queued on the one local model, so this will take a while."
+                            ),
+                        }
+                    )
 
             await execution.run(
                 self.run,
                 units,
                 self.notes,
-                negotiate_first=self.run.depth != "quick" and not all_local,
+                negotiate_first=self.run.depth != "quick",
             )
             await self.conclude(units, reviewer_agent)
         except asyncio.CancelledError:

@@ -77,6 +77,9 @@ Each line exists because something went wrong without it.
 14. A deep plan is critiqued by a different specialist (`REASON_CRITIC`) before code is
     written, and the code prompt carries that critique. The author grading its own plan
     was the weakness; do not drop the pass to save one call.
+15. Usage is reconstructed from `usage` events whenever a run is restored; the JSON
+    ledger is a cache. A resume that starts from an empty usage map makes a 78k-token
+    build read as a 1k chat. Same for files: the workspace is the record.
 15. A revision first tries `modules/agent_loop.py`: read, a targeted edit, check, repeat,
     with a check-gated `done`. The whole-file rewrite is the fallback when a model cannot
     speak the tool protocol, never the first choice. The prompt is `prompts.AGENT_REPAIR`,

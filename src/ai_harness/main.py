@@ -15,7 +15,6 @@ Two rules this module enforces rather than documents:
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import secrets
 from pathlib import Path
@@ -25,7 +24,7 @@ from urllib.parse import urlparse
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -33,7 +32,6 @@ from . import paths, preview
 from .config.settings import (
     AGENT_LOOP,
     AGENT_STEPS,
-    BASIC_AUTH,
     BROWSER_CHECK,
     CACHE_ENABLED,
     DIST_DIR,
@@ -183,34 +181,6 @@ async def guard(request: Request, call_next):
     if not supplied or not secrets.compare_digest(supplied, api_token()):
         return JSONResponse({"detail": "missing or invalid harness token"}, status_code=403)
     return await call_next(request)
-
-
-@app.middleware("http")
-async def basic_auth(request: Request, call_next):
-    """One password in front of everything when this instance is public.
-
-    Local use leaves `HARNESS_BASIC_AUTH` unset. A Render deployment sets it, because
-    otherwise any visitor could drive the harness and spend the owner's provider keys.
-    `/api/health` stays open for Render's health check; it exposes limits, not secrets.
-    """
-    if not BASIC_AUTH or request.url.path == "/api/health" or request.method == "OPTIONS":
-        return await call_next(request)
-
-    expected = BASIC_AUTH if ":" in BASIC_AUTH else f"cortex:{BASIC_AUTH}"
-    header = request.headers.get("authorization", "")
-    supplied = ""
-    if header.lower().startswith("basic "):
-        try:
-            supplied = base64.b64decode(header[6:], validate=True).decode("utf-8")
-        except ValueError:
-            supplied = ""
-    if supplied and secrets.compare_digest(supplied, expected):
-        return await call_next(request)
-    return Response(
-        status_code=401,
-        headers={"WWW-Authenticate": 'Basic realm="Cortex", charset="UTF-8"'},
-        content="Cortex is password protected.",
-    )
 
 
 def _run_dir(run_id: str) -> Path:
@@ -610,15 +580,17 @@ async def preview_check(run_id: str) -> dict:
 
 @app.get("/api/run/{run_id}/metrics")
 async def run_metrics(run_id: str) -> dict:
+    # The event log is the source of truth; the JSON ledger is a cache that a resume can
+    # overwrite. Prefer the rebuilt run, fall back to the file for a legacy run.
+    run = harness.get(run_id)
+    if run:
+        return run.metrics()
     path = _run_dir(run_id) / ".harness-metrics.json"
     if path.exists():
         try:
             return json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             pass
-    run = harness.get(run_id)
-    if run:
-        return run.metrics()
     raise HTTPException(404, "unknown run")
 
 
