@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
 import { Office, roleColor, type AgentStatus, type AgentView, type Zone } from "../components/office/Office";
+import { RichText } from "../lib/markdown";
 import { navigate } from "../lib/router";
 import { hydrateRoster, isConfigured, loadRoster, type Specialist } from "../lib/providers";
 import {
@@ -142,6 +143,12 @@ export default function Build() {
   const [scaffold, setScaffold] = useState<string[]>([]);
   const [sources, setSources] = useState<{ title: string; url: string; query: string }[]>([]);
   const [feed, setFeed] = useState<{ id: number; from: string; to?: string; text: string; kind: string }[]>([]);
+  // The run's final message is the answer the person came for; everything else in the feed
+  // is the team talking to itself. Keep them apart so the answer reads like an answer.
+  const answer = useMemo(() => {
+    const reports = feed.filter((line) => line.kind === "report");
+    return reports.length ? reports[reports.length - 1].text : "";
+  }, [feed]);
   const [live, setLive] = useState<Record<string, string>>({});
   const [files, setFiles] = useState<FileRow[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -1263,14 +1270,17 @@ export default function Build() {
             ) : (
               <div className="bld-activity">
                 {feed.length === 0 && <p className="rail-empty">Conversation between specialists appears here.</p>}
-                {feed.slice(-10).map((line) => (
-                  <div className={`bld-act kind-${line.kind}`} key={line.id}>
-                    <span style={{ ["--tone" as string]: roleColor(agents[line.from]?.role ?? "") }}>
-                      {agents[line.from]?.name ?? line.from}
-                    </span>
-                    <p>{line.text}</p>
-                  </div>
-                ))}
+                {feed
+                  .filter((line) => line.kind !== "report")
+                  .slice(-10)
+                  .map((line) => (
+                    <div className={`bld-act kind-${line.kind}`} key={line.id}>
+                      <span style={{ ["--tone" as string]: roleColor(agents[line.from]?.role ?? "") }}>
+                        {agents[line.from]?.name ?? line.from}
+                      </span>
+                      <p>{line.text}</p>
+                    </div>
+                  ))}
               </div>
             )}
           </div>
@@ -1527,17 +1537,25 @@ export default function Build() {
 
             {tab === "thoughts" && (
               <div className="th">
+                {answer && (
+                  <div className="th-answer">
+                    <span className="th-answer-tag">Answer</span>
+                    <RichText text={answer} />
+                  </div>
+                )}
                 <div className="th-feed">
                   {feed.length === 0 && <p className="pane-empty">Conversation between specialists shows up here.</p>}
-                  {feed.map((line) => (
-                    <div className={`th-msg kind-${line.kind}`} key={line.id}>
-                      <span className="th-from" style={{ ["--tone" as string]: roleColor(agents[line.from]?.role ?? "") }}>
-                        {agents[line.from]?.name ?? line.from}
-                      </span>
-                      {line.to && <span className="th-to">→ {line.to === "all" ? "everyone" : agents[line.to]?.name ?? line.to}</span>}
-                      <p>{line.text}</p>
-                    </div>
-                  ))}
+                  {feed
+                    .filter((line) => line.kind !== "report")
+                    .map((line) => (
+                      <div className={`th-msg kind-${line.kind}`} key={line.id}>
+                        <span className="th-from" style={{ ["--tone" as string]: roleColor(agents[line.from]?.role ?? "") }}>
+                          {agents[line.from]?.name ?? line.from}
+                        </span>
+                        {line.to && <span className="th-to">→ {line.to === "all" ? "everyone" : agents[line.to]?.name ?? line.to}</span>}
+                        <p>{line.text}</p>
+                      </div>
+                    ))}
                 </div>
                 <div className="th-think">
                   {Object.values(agents)
