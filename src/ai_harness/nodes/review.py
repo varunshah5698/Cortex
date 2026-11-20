@@ -467,6 +467,7 @@ async def revise(
                         prompt=run.prompt,
                         reasoning=deliberation or answered,
                         critique=findings[:700],
+                        design=prompts.DESIGN_CONTRACT,
                         contracts=run.contracts.get(author.id, ""),
                         peer_files=context.files_context(run.files, exclude=unit.file),
                         lessons=memory.lessons(),

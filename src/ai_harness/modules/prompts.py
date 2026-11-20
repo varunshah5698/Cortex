@@ -38,6 +38,9 @@ Rules:
   the harness already provides a baseline, so extend it instead of undoing it.
 - A page with three or more distinct sections gets one component per section plus a page
   and a stylesheet. Do not put an entire site in one file and call it done.
+- A visual request also needs a design direction, not only a file list: name the aesthetic
+  (calm editorial, dense dashboard, warm marketing, technical docs) and the type and
+  colour intent in the objective, so the writers share one look instead of three.
 - The files must fit together: the entry file imports the others by those exact paths.
 - Roles: markup, styling and UI are frontend; logic, data, entry wiring and manifests are backend.
 - A React request gets .tsx/.jsx, a Python request gets .py, a CLI gets .ts or .go — match the request.
@@ -143,6 +146,29 @@ VERDICT: SOUND | REVISE
 FINDINGS: numbered, each naming the exact problem and the fix. If SOUND, write the one
 check the builder must not skip."""
 
+# The design contract, injected into the code pass. A page is a designed artefact, not
+# only a wired one: verify.py already proves it runs, and modules/design.py reports the
+# classes nobody styles. This is the instruction that stops those findings existing.
+DESIGN_CONTRACT = """
+Design contract — a page is judged as a designed artefact, not only as working code.
+- Tokens first: declare custom properties on :root for colour, spacing and type, and use
+  them everywhere. Hard-coded hex values scattered through the sheet are a finding.
+- A type scale, not one size: at least three distinct sizes with a deliberate ratio
+  (for example 0.875rem body, 1.5rem section, 2.5rem display), plus a line-height.
+- Spacing rhythm: one scale (4/8/12/16/24/32/48/64) applied through padding, gap and
+  margin. No arbitrary one-off values.
+- Every class you use in the markup must have a rule. A class with no rule is dead weight.
+- Every control needs states: :hover, :focus-visible and :disabled where it applies.
+  A button that does not change on hover reads as broken.
+- One @media breakpoint at minimum (max-width: 640px), and the layout must survive it.
+- Colour: one accent, one neutral ramp, and text that meets contrast against its own
+  background. Do not put grey text on a grey card.
+- No placeholder aesthetics: no lorem ipsum, no emoji as an icon set, no default-blue
+  links inside a designed card, no unstyled <button> or <input>.
+- Commit to a direction. A calm editorial page and a dense dashboard are both fine; a
+  page that is neither is the failure mode. Name the direction in your reasoning.
+"""
+
 # Pass 2 — code, grounded in the agent's own reasoning and the critic's findings.
 CODE = """You are {name}, the {role} specialist writing {file} for: "{prompt}"
 That file's job in the build: {objective}
@@ -152,6 +178,7 @@ Your own plan, which you must follow:
 
 For a page, build the look on purpose: a coherent type scale, spacing rhythm, colour and
 states. Use the planned stylesheet; inline-only styling is a fallback for a one-off.
+{design}
 
 The reviewer's critique of that plan — treat a REVISE finding as a requirement, not a
 suggestion, and correct the plan before you write:
@@ -231,6 +258,15 @@ web page, headers and routing for a service, argv and exit codes for a CLI).
 
 Judge the result as a person would use it. For a page, also judge hierarchy, spacing,
 colour and responsiveness: an unstyled or inline-only page is a finding, not a pass.
+
+For a page, judge the design against this contract and name the exact class or rule that
+breaks it:
+- tokens on :root, and used rather than hard-coded hex values;
+- a type scale of at least three deliberate sizes, not one size everywhere;
+- a spacing rhythm, not arbitrary one-off values;
+- every class in the markup styled, and every control with :hover and :focus-visible;
+- at least one @media breakpoint that the layout survives;
+- text contrast against its own background, and one committed visual direction.
 
 Reply with 3-5 numbered findings, each naming the FILE and the exact problem, most severe first.
 If it is genuinely correct, reply with exactly: APPROVED"""

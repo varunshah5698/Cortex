@@ -88,6 +88,15 @@ Generated pages run on a separate origin with no `/api`, under a per-run nonce.
 
 ## Verification tiers
 
+0. **Design**: `modules/design.py` reads the written page and reports whether it was
+   *designed* or only *wired* — classes the markup uses that no rule styles, a stylesheet
+   whose selectors match nothing, a page with no styling at all, and the softer signals
+   (no type scale, no tokens, no breakpoint, no `:hover`/`:focus-visible`). A dead
+   stylesheet or an unstyled page is an **error**; under-design is a **warning** that
+   becomes evidence in the reviewer's prompt and the repair loop. A framework tree is
+   exempt from the hard gate, because its stylesheet legitimately lands after its
+   components. The instruction that stops these findings existing is
+   `prompts.DESIGN_CONTRACT`, injected into every code pass.
 1. **Static**: Ruff lint and format, TypeScript types. Fast enough to run on every edit.
 2. **Tests and evals**: pytest (no network, no provider), the offline eval suite, the
    structural verifier over the generated tree, the stack's own compiler.
@@ -111,6 +120,10 @@ to make a run pass.
   interaction flows.
 - The planner produces files and work units, not a persisted feature list with pass/fail
   flags. The verifier checks structure; it cannot check product intent.
+- The design sensor reads CSS statically. It can prove a class is unstyled and that no
+  breakpoint exists; it cannot see that the result is *ugly*, that the contrast is
+  actually insufficient, or that the layout breaks at a width it never tested. Those stay
+  with the browser tier and the reviewer.
 - Context resets exist through per-run workspaces, but there is no cross-session handoff
   artefact yet: a new run starts from project memory, not from the last run's open work.
 - A monthly subtraction pass exists (`scripts/audit.py`); it is not scheduled.

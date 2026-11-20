@@ -60,7 +60,14 @@ async def _fake_stream(agent: Specialist, messages: list[dict], think: bool = Fa
 
 
 async def _fake_compose(agent: Specialist, messages: list[dict], **kwargs):  # noqa: ANN001
-    files = [("index.html", "<html><h1>Coffee</h1></html>\n")]
+    files = [
+        (
+            "index.html",
+            '<html><head><link rel="stylesheet" href="style.css"></head>'
+            '<body><h1 class="title">Coffee</h1></body></html>\n',
+        ),
+        ("style.css", ".title { font-size: 1.5rem; }\n"),
+    ]
     return files, Usage(prompt_tokens=20, completion_tokens=9, ms=18, calls=1)
 
 
@@ -83,7 +90,11 @@ def test_review_revises_without_network(tmp_path: Path) -> None:
         review.llm.stream = original_stream
         executor.compose = original_compose
 
-    assert findings == FINDINGS
+    # The reviewer's findings lead; the harness may append its own deterministic facts
+    # (the pre-review file here is a bare `<html>` fragment, which the design sensor
+    # correctly reports). What this test guards is the revise hand-off, not a byte-exact
+    # findings string.
+    assert findings.startswith(FINDINGS)
     ends = [event for event in run.events if event.get("type") == "file_end"]
     assert ends and ends[-1]["revised"] is True
     assert run.files["index.html"]["done"] is True

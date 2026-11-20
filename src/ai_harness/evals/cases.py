@@ -62,21 +62,76 @@ COUNTER_HTML = """<!doctype html>
 </html>
 """
 
-COUNTER_CSS = """body {
+COUNTER_CSS = """:root {
+  --ink: #16181d;
+  --muted: #5b6270;
+  --surface: #ffffff;
+  --line: #e4e7ec;
+  --accent: #2f6feb;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --text-sm: 0.875rem;
+  --text-lg: 1.5rem;
+  --text-xl: 3rem;
+}
+
+body {
   margin: 0;
   font-family: system-ui, sans-serif;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--ink);
+  background: #f6f7f9;
   display: grid;
   place-items: center;
   min-height: 100vh;
 }
 
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: var(--space-6);
+  text-align: center;
+  box-shadow: 0 1px 2px rgb(16 24 40 / 6%);
+}
+
+.card h1 {
+  font-size: var(--text-lg);
+  margin: 0 0 var(--space-2);
+}
+
 #count {
-  font-size: 3rem;
-  margin: 0.5rem 0;
+  font-size: var(--text-xl);
+  font-variant-numeric: tabular-nums;
+  margin: var(--space-2) 0 var(--space-4);
 }
 
 #go {
-  padding: 0.6rem 1rem;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-sm);
+  color: #ffffff;
+  background: var(--accent);
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+#go:hover {
+  filter: brightness(1.08);
+}
+
+#go:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  .card {
+    padding: var(--space-4);
+  }
 }
 """
 
@@ -159,6 +214,35 @@ def test_main() -> None:
 """
 
 PYTHON_DEPS = "pytest==8.3.3\n"
+
+DEAD_CSS = """/* Styling for a different page: none of these selectors exist in the markup. */
+.hero-banner {
+  padding: 4rem;
+  background: #101828;
+}
+
+.pricing-grid {
+  display: grid;
+  gap: 1rem;
+}
+"""
+
+BARE_HTML = """<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Counter</title>
+  </head>
+  <body>
+    <main>
+      <h1>Counter</h1>
+      <p id="count">0</p>
+      <button id="go" type="button">Add one</button>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>
+"""
 
 CASES: list[Case] = [
     Case(
@@ -248,5 +332,40 @@ CASES: list[Case] = [
         code={"index.html": COUNTER_HTML, "app.js": COUNTER_JS},
         expect_ok=False,
         note="a declared file nobody wrote must be reported as empty",
+    ),
+    Case(
+        name="dead-stylesheet",
+        prompt="build a counter page with a stylesheet",
+        plan=_plan(
+            "A counter whose styling belongs to another page",
+            [
+                ("Markup", "frontend", "index.html", "the counter markup, linking styles.css and app.js"),
+                ("Styling", "frontend", "styles.css", "the card styling"),
+                ("Wiring", "backend", "app.js", "increment #count when #go is clicked"),
+            ],
+        ),
+        code={"index.html": COUNTER_HTML, "styles.css": DEAD_CSS, "app.js": COUNTER_JS},
+        # Every existing check passes here: the ids match, the imports resolve, the
+        # stylesheet the markup links exists and is not empty. The page is still unstyled,
+        # because no selector in the sheet matches anything the markup uses. That is the
+        # defect the design sensor exists for, so the run must be caught and stop short.
+        expect_ok=False,
+        must_flag=frozenset({"dead_stylesheet"}),
+        note="a stylesheet that matches nothing is styling in name only",
+    ),
+    Case(
+        name="unstyled-page",
+        prompt="build a counter page",
+        plan=_plan(
+            "A counter with no styling at all",
+            [
+                ("Markup", "frontend", "index.html", "the counter markup, linking app.js"),
+                ("Wiring", "backend", "app.js", "increment #count when #go is clicked"),
+            ],
+        ),
+        code={"index.html": BARE_HTML, "app.js": COUNTER_JS},
+        expect_ok=False,
+        must_flag=frozenset({"unstyled_page"}),
+        note="a page with no stylesheet, no style block and no inline style is a document",
     ),
 ]

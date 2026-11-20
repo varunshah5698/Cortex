@@ -272,7 +272,13 @@ def test_resume_skips_planning_and_concludes_from_disk(tmp_path, monkeypatch):
     monkeypatch.setattr(state_mod, "RUNS_ROOT", tmp_path)
     workspace = tmp_path / "resume1"
     workspace.mkdir()
-    (workspace / "index.html").write_text("<html><body><h1>Hi</h1></body></html>\n", encoding="utf-8")
+    # A page that is meant to pass the gate has to be styled: the design sensor reports a
+    # page with no stylesheet at all, so a bare <h1> fixture would fail for the wrong reason.
+    (workspace / "index.html").write_text(
+        '<html><head><link rel="stylesheet" href="style.css"></head><body><h1 class="title">Hi</h1></body></html>\n',
+        encoding="utf-8",
+    )
+    (workspace / "style.css").write_text(".title { font-size: 1.5rem; }\n", encoding="utf-8")
     (workspace / ".harness-plan.json").write_text(
         json.dumps(
             {
