@@ -62,16 +62,55 @@ def _tsconfig() -> str:
     )
 
 
-def _index(entry: str) -> str:
+def _index(entry: str, css: str = "") -> str:
+    link = f'    <link rel="stylesheet" href="/{css}" />\n' if css else ""
     return (
         '<!doctype html>\n<html lang="en">\n  <head>\n'
         '    <meta charset="UTF-8" />\n'
         '    <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n'
+        f"{link}"
         "    <title>Portfolio</title>\n  </head>\n  <body>\n"
         '    <div id="root"></div>\n'
         f'    <script type="module" src="/{entry}"></script>\n'
         "  </body>\n</html>\n"
     )
+
+
+def _base_css() -> str:
+    """A coherent baseline, not a design: the model still owns the look.
+
+    A page with no stylesheet is the local model's default and it reads as broken. The
+    harness plants variables, typography and spacing; the agent can extend or replace it.
+    """
+    return """:root {
+  --ink: #1f2937;
+  --muted: #6b7280;
+  --paper: #f8fafc;
+  --line: #e5e7eb;
+  --accent: #7c4fe0;
+  --radius: 12px;
+}
+* { box-sizing: border-box; }
+html { color-scheme: light; }
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  line-height: 1.6;
+  color: var(--ink);
+  background: var(--paper);
+}
+img { max-width: 100%; display: block; }
+h1, h2, h3 { line-height: 1.15; letter-spacing: -0.02em; }
+h1 { font-size: clamp(2.2rem, 6vw, 4rem); }
+h2 { font-size: clamp(1.5rem, 3vw, 2.2rem); }
+a { color: var(--accent); }
+main, section { padding: clamp(2rem, 6vw, 5rem) clamp(1rem, 5vw, 4rem); }
+button, .button {
+  border: 0; border-radius: 10px; padding: 0.7rem 1.2rem;
+  background: var(--ink); color: white; font: inherit; cursor: pointer;
+}
+.button:hover, button:hover { opacity: 0.9; }
+"""
 
 
 def _vite_config() -> str:
@@ -83,17 +122,23 @@ def _vite_config() -> str:
 
 
 def assign(roster: list[Specialist], units: list[WorkUnit]) -> dict[str, Specialist]:
-    """Spread units across the team: load first, role second, planner last."""
+    """Spread units across the writers: load first, role second, planner last.
+
+    A reviewer that also owns a file reviews its own work, and the separation the
+    critic pass exists for is gone. Only fall back to a reviewer/synthesizer when the
+    team has nobody else to write.
+    """
+    writers = [spec for spec in roster if spec.role not in ("reviewer", "synthesizer")] or roster
     loads: dict[str, int] = {}
 
     def weight(spec: Specialist, unit: WorkUnit) -> tuple[int, int, int]:
         off_role = 0 if spec.role == unit.role else 2
-        reserved = 20 if spec.role in ("reviewer", "synthesizer") else 6 if spec.role == "planner" else 0
+        reserved = 6 if spec.role == "planner" else 0
         return (loads.get(spec.id, 0), off_role + reserved, 0)
 
     mapping: dict[str, Specialist] = {}
     for unit in units:
-        chosen = sorted(roster, key=lambda spec: weight(spec, unit))[0]
+        chosen = sorted(writers, key=lambda spec: weight(spec, unit))[0]
         mapping[unit.id] = chosen
         loads[chosen.id] = loads.get(chosen.id, 0) + 1
     return mapping
@@ -117,11 +162,15 @@ async def run(run: RunState, planner: Specialist) -> tuple[list[WorkUnit], list[
             if path not in files:
                 files.append(path)
         units = [unit for unit in units if unit.file not in owned]
-        harness_files = {
-            "package.json": _manifest(run.prompt, entry),
-            "index.html": _index(entry),
-            "vite.config.ts": _vite_config(),
-        }
+        css = next((path for path in files if path.endswith(".css")), "")
+        if not css:
+            css = "src/index.css"
+            if css not in files:
+                files.append(css)
+            harness_files[css] = _base_css()
+        harness_files["index.html"] = _index(entry, css)
+        harness_files["package.json"] = _manifest(run.prompt, entry)
+        harness_files["vite.config.ts"] = _vite_config()
         if entry.endswith(".tsx"):
             harness_files["tsconfig.json"] = _tsconfig()
 
