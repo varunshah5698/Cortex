@@ -127,11 +127,17 @@ def load(run) -> list[Feature]:
         if not feature_id:
             continue
         status = str(entry.get("status") or NOT_STARTED)
+        # The file lives in the run workspace, so a model can edit it. A non-numeric
+        # priority is a bad row, not a reason for every gate that loads the list to fail.
+        try:
+            priority = int(entry.get("priority") or 0)
+        except (TypeError, ValueError):
+            priority = 0
         features.append(
             Feature(
                 id=feature_id,
                 title=str(entry.get("title") or feature_id),
-                priority=int(entry.get("priority") or 0),
+                priority=priority,
                 area=str(entry.get("area") or ""),
                 user_visible_behavior=str(entry.get("user_visible_behavior") or ""),
                 status=status if status in STATUSES else NOT_STARTED,

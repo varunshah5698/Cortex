@@ -176,31 +176,57 @@ async def stream(
     # working provider still gets its time; only a call that outlives `STREAM_SECONDS` is
     # cut, and it is cut with a ProviderError the nodes already handle.
     deadline = started + STREAM_SECONDS if STREAM_SECONDS else None
-    async for kind, text in _adapter_stream(
+    cut = False
+    chunks = _adapter_stream(
         spec,
         messages,
         think=think,
         temperature=TEMPERATURE if temperature is None else temperature,
         json_mode=json_mode,
         stats=stats,
-    ):
+    ).__aiter__()
+
+    async def cut_stream() -> None:
+        """Report a cut stream once, and close the provider connection."""
+        nonlocal cut
+        cut = True
+        stats.truncated = True
+        await runtime.emit(
+            {
+                "type": "stream-cut",
+                "agent": spec.id,
+                "model": spec.model,
+                "seconds": round(time.perf_counter() - started, 1),
+                "message": (
+                    f"{spec.name}'s call ran past its {STREAM_SECONDS:.0f}s bound and was cut; "
+                    "the text is a prefix, not a complete answer"
+                ),
+            }
+        )
+        try:
+            await chunks.aclose()  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 - a closed or already-running generator
+            pass
+
+    # The bound must cover a stream that sends nothing at all, not only a chatty one.
+    # Iterating with a per-chunk timeout is what makes the deadline apply to a stalled
+    # connection; the in-loop check alone only fires when a chunk finally arrives.
+    while True:
+        try:
+            if deadline is None:
+                kind, text = await chunks.__anext__()
+            else:
+                remaining = deadline - time.perf_counter()
+                if remaining <= 0:
+                    raise asyncio.TimeoutError
+                kind, text = await asyncio.wait_for(chunks.__anext__(), timeout=remaining)
+        except StopAsyncIteration:
+            break
+        except asyncio.TimeoutError:
+            await cut_stream()
+            break
         if deadline is not None and time.perf_counter() > deadline:
-            # Closing the generator closes the provider connection; the caller keeps the
-            # partial text in `stats`, which is what lets a truncated answer still be
-            # useful instead of vanishing.
-            stats.truncated = True
-            await runtime.emit(
-                {
-                    "type": "stream-cut",
-                    "agent": spec.id,
-                    "model": spec.model,
-                    "seconds": round(time.perf_counter() - started, 1),
-                    "message": (
-                        f"{spec.name}'s call ran past its {STREAM_SECONDS:.0f}s bound and was cut; "
-                        "the text is a prefix, not a complete answer"
-                    ),
-                }
-            )
+            await cut_stream()
             break
         yield (kind, text)
 
@@ -217,9 +243,10 @@ async def stream(
     stats.usage.cost_usd = pricing.estimate(spec, stats.usage.prompt_tokens, stats.usage.completion_tokens)
     if budget is not None:
         budget.spend(stats.usage.prompt_tokens + stats.usage.completion_tokens, stats.usage.cost_usd)
-    if stats.truncated:
+    if stats.truncated and not cut:
         # Say it once, where the spend is recorded. A truncated generation that nobody
         # mentions is the failure mode this flag exists to end: the file looks written.
+        # A cut stream already said so above; the token-ceiling wording would be a lie.
         await runtime.emit(
             {
                 "type": "truncated",

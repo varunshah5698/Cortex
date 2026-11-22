@@ -17,10 +17,16 @@ What this adds over `agent_loop`'s `search`, which stays as the cheap literal pa
 
 Every path resolves through the caller's `FileManager`, so this reads exactly what the
 loop is already allowed to read and nothing else.
+
+The pattern is model-authored, and `re` cannot be interrupted: `(a+)+$` against a short
+line backtracks for minutes, and a thread stuck in that match could only be abandoned
+while it kept burning a core. So the match runs in a child process and is killed at
+`REGEX_BUDGET_SECONDS`. A bad pattern costs one observation, not the run.
 """
 
 from __future__ import annotations
 
+import multiprocessing
 import re
 from dataclasses import dataclass
 
@@ -63,6 +69,82 @@ def _wanted(path: str, extension: str) -> bool:
     return path.lower().endswith(suffix.lower())
 
 
+def _corpus(files: list[dict], read, scope: str, extension: str) -> list[tuple[str, str]]:
+    """The readable candidates, as plain strings so a child process needs no callbacks."""
+    prefix = scope.strip().strip("./")
+    corpus: list[tuple[str, str]] = []
+    for item in files:
+        path = str(item.get("path") or "")
+        if not path or not _wanted(path, extension):
+            continue
+        if prefix and not path.startswith(prefix):
+            continue
+        if int(item.get("bytes") or 0) > MAX_FILE_BYTES:
+            continue
+        try:
+            corpus.append((path, read(path)))
+        except Exception:  # noqa: BLE001 - an unreadable file is skipped, not fatal
+            continue
+    return corpus
+
+
+def _matches(
+    corpus: list[tuple[str, str]],
+    pattern: str,
+    case_sensitive: bool,
+    limit: int,
+    out,
+) -> None:
+    """The worker: match, then hand back plain tuples. Module level so `spawn` can import it."""
+    regex = re.compile(pattern, 0 if case_sensitive else re.IGNORECASE)
+    hits: list[tuple[str, int, str]] = []
+    for path, body in corpus:
+        for number, line in enumerate(body.splitlines(), start=1):
+            if regex.search(line):
+                hits.append((path, number, line.strip()[:MAX_LINE]))
+                if len(hits) >= limit:
+                    out.send(hits)
+                    return
+    out.send(hits)
+
+
+def _bounded(
+    corpus: list[tuple[str, str]], pattern: str, case_sensitive: bool, limit: int
+) -> list[tuple[str, int, str]]:
+    """Match in a child process, and kill it rather than wait past the budget."""
+    context = _context()
+    receiver, sender = context.Pipe(duplex=False)
+    worker = context.Process(target=_matches, args=(corpus, pattern, case_sensitive, limit, sender), daemon=True)
+    worker.start()
+    sender.close()
+    try:
+        if not receiver.poll(REGEX_BUDGET_SECONDS):
+            raise SearchError(
+                f"pattern {pattern!r} exceeded the {REGEX_BUDGET_SECONDS:g}s search budget; "
+                "simplify it (nested quantifiers such as (a+)+ backtrack catastrophically)"
+            )
+        try:
+            return receiver.recv()
+        except EOFError as exc:  # the worker died before answering
+            raise SearchError(f"pattern {pattern!r} could not be run: the search worker failed") from exc
+    finally:
+        if worker.is_alive():
+            # SIGKILL, not terminate(): a regex match runs entirely in C, so an inherited
+            # SIGTERM handler only runs once the match returns — which is never, here.
+            worker.kill()
+            worker.join(1.0)
+        receiver.close()
+
+
+def _context():
+    """Fork where the platform has it: the corpus is already readable in the child, so a
+    search costs a few milliseconds instead of re-importing the package under `spawn`."""
+    try:
+        return multiprocessing.get_context("fork")
+    except ValueError:  # pragma: no cover - Windows
+        return multiprocessing.get_context()
+
+
 def search(
     files: list[dict],
     read,
@@ -78,28 +160,14 @@ def search(
     the harness's own bookkeeping are the caller's to exclude; this function searches
     exactly the list it is given.
     """
-    regex = compile_pattern(pattern, case_sensitive)
-    prefix = scope.strip().strip("./")
-    hits: list[Hit] = []
-
-    for item in files:
-        path = str(item.get("path") or "")
-        if not path or not _wanted(path, extension):
-            continue
-        if prefix and not path.startswith(prefix):
-            continue
-        if int(item.get("bytes") or 0) > MAX_FILE_BYTES:
-            continue
-        try:
-            body = read(path)
-        except Exception:  # noqa: BLE001 - an unreadable file is skipped, not fatal
-            continue
-        for number, line in enumerate(body.splitlines(), start=1):
-            if regex.search(line):
-                hits.append(Hit(path=path, line=number, text=line.strip()[:MAX_LINE]))
-                if len(hits) >= limit:
-                    return hits
-    return hits
+    compile_pattern(pattern, case_sensitive)  # an invalid pattern is refused before any fork
+    corpus = _corpus(files, read, scope, extension)
+    if not corpus:
+        return []
+    return [
+        Hit(path=path, line=number, text=text)
+        for path, number, text in _bounded(corpus, pattern, case_sensitive, limit)
+    ]
 
 
 def render(hits: list[Hit], pattern: str, scope: str, limit: int = MAX_MATCHES) -> str:

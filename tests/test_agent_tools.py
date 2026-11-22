@@ -9,6 +9,7 @@ an unapproved command never reaches a process at all.
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -92,6 +93,20 @@ def test_grep_skips_dotfiles_and_harness_bookkeeping(tmp_path: Path) -> None:
     assert "app.py:1" in observation
     assert ".env" not in observation
     assert "todo.md" not in observation
+
+
+def test_grep_kills_a_catastrophic_pattern_at_the_budget(tmp_path: Path, monkeypatch) -> None:
+    # `(a+)+$` against a line that does not match backtracks exponentially, and `re` cannot
+    # be interrupted; the tool has to kill the process running it or the run stalls here.
+    monkeypatch.setattr(code_search, "REGEX_BUDGET_SECONDS", 0.2)
+    state = _state(tmp_path, {"app.py": "a" * 32 + "!\n"})
+    started = time.monotonic()
+
+    with pytest.raises(agent_loop.ToolError) as exc:
+        state.execute("grep", {"pattern": "(a+)+$"})
+
+    assert time.monotonic() - started < 10
+    assert "search budget" in str(exc.value)
 
 
 def test_code_search_caps_the_matches(tmp_path: Path) -> None:

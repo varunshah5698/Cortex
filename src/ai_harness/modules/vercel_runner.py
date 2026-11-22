@@ -74,6 +74,15 @@ def _project(run_id: str) -> str:
     return f"cortex-{run_id}".lower()
 
 
+def _reason(lines: list[str]) -> str:
+    """The CLI's own sentence for a failed deployment, not just its exit code."""
+    for line in lines:
+        stripped = line.strip()
+        if stripped.lower().startswith("error"):
+            return stripped
+    return lines[-1].strip() if lines else ""
+
+
 @dataclass
 class VercelService:
     run_id: str
@@ -251,7 +260,8 @@ async def deploy(run_id: str, workspace: Path) -> VercelService:
     service.logs = [line for line in text.splitlines() if line.strip()]
     if process.returncode != 0:
         service.state = "failed"
-        service.detail = f"Vercel exited {process.returncode}"
+        reason = _reason(service.logs)
+        service.detail = f"Vercel exited {process.returncode}" + (f": {reason}" if reason else "")
         service.exit_code = process.returncode
         shutil.rmtree(workdir, ignore_errors=True)
         return service

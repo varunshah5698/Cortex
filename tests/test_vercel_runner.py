@@ -39,6 +39,72 @@ def test_a_vercel_service_payload_is_remote(tmp_path: Path) -> None:
     assert payload["browser"] is None
 
 
+def test_a_failed_deployment_reports_the_cli_reason() -> None:
+    lines = ["Vercel CLI 59.10.0", "Error: Not authorized", ""]
+    assert vercel_runner._reason(lines) == "Error: Not authorized"  # noqa: SLF001
+
+
+def test_a_failed_vercel_deployment_falls_back_to_the_cloud_runner(tmp_path: Path, monkeypatch) -> None:
+    import asyncio
+
+    from ai_harness import main as api
+
+    failed = vercel_runner.VercelService(run_id="r1", project="cortex-r1")
+    failed.state = "failed"
+    failed.detail = "Vercel exited 1: Error: Not authorized"
+
+    async def deploy(_run_id: str, _workspace: Path) -> vercel_runner.VercelService:
+        return failed
+
+    async def start(_run_id: str, _workspace: Path) -> object:
+        return api.remote_runner.RemoteService(run_id="r1", url="https://cortex-runner.test/runs/r1/token/")
+
+    monkeypatch.setattr(api, "_run_dir", lambda _run_id: tmp_path)
+    monkeypatch.setattr(api.harness, "get", lambda _run_id: None)
+    monkeypatch.setattr(api, "REQUIRE_APPROVAL", False)
+    monkeypatch.setattr(api, "_vercel_mode", lambda: True)
+    monkeypatch.setattr(vercel_runner, "supported", lambda _workspace: True)
+    monkeypatch.setattr(vercel_runner, "deploy", deploy)
+    monkeypatch.setattr(api.remote_runner, "available", lambda: True)
+    monkeypatch.setattr(api.remote_runner, "start", start)
+
+    try:
+        payload = asyncio.run(api.serve_start("r1"))
+        assert payload["kind"] == "cloud"
+        assert payload["url"] == "https://cortex-runner.test/runs/r1/token/"
+        assert "r1" in api._remote_runs  # noqa: SLF001
+    finally:
+        api._remote_runs.pop("r1", None)  # noqa: SLF001
+
+
+def test_a_failed_vercel_deployment_without_a_runner_names_its_reason(tmp_path: Path, monkeypatch) -> None:
+    import asyncio
+
+    from ai_harness import main as api
+
+    failed = vercel_runner.VercelService(run_id="r1", project="cortex-r1")
+    failed.state = "failed"
+    failed.detail = "Vercel exited 1: Error: Not authorized"
+
+    async def deploy(_run_id: str, _workspace: Path) -> vercel_runner.VercelService:
+        return failed
+
+    monkeypatch.setattr(api, "_run_dir", lambda _run_id: tmp_path)
+    monkeypatch.setattr(api.harness, "get", lambda _run_id: None)
+    monkeypatch.setattr(api, "REQUIRE_APPROVAL", False)
+    monkeypatch.setattr(api, "_vercel_mode", lambda: True)
+    monkeypatch.setattr(vercel_runner, "supported", lambda _workspace: True)
+    monkeypatch.setattr(vercel_runner, "deploy", deploy)
+    monkeypatch.setattr(api.remote_runner, "available", lambda: False)
+
+    try:
+        payload = asyncio.run(api.serve_start("r1"))
+        assert payload["state"] == "failed"
+        assert "Not authorized" in payload["detail"]
+    finally:
+        api._vercel_runs.pop("r1", None)  # noqa: SLF001
+
+
 @pytest.mark.skipif(
     os.getenv("HARNESS_LIVE_VERCEL") != "1" or shutil.which("vercel") is None,
     reason="live Vercel deployment test is opt-in (HARNESS_LIVE_VERCEL=1)",

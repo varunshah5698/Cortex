@@ -28,23 +28,27 @@ def peer_context(contracts: dict[str, str]) -> str:
     return "\n".join(f"- {name}: {clip(text, 120)}" for name, text in contracts.items())
 
 
-def files_context(files: dict[str, dict], exclude: str = "", max_files: int = 4, tokens: int = 320) -> str:
+def files_context(files: dict[str, dict], exclude: str = "", max_files: int = 8, tokens: int = 480) -> str:
     """What the peers actually wrote, not only what they promised.
 
     A specialist that sees the real markup and selectors keeps them; one that sees only
     a contract invents a second copy. Bodies are clipped, so this is context, not a dump.
+
+    The most recently written files come first. Taking the alphabetically first four was
+    how an author late in the plan saw `About.tsx` and `App.tsx` but not the component
+    written immediately before it — every file was written against the wrong neighbours.
     """
-    chosen: list[str] = []
-    for path in sorted(files):
-        if path == exclude or path in ("todo.md", "RECEIPT.md"):
-            continue
-        content = str((files.get(path) or {}).get("content") or "").strip()
-        if not content:
-            continue
-        chosen.append(f"--- {path} ---\n{clip(content, tokens)}")
-        if len(chosen) >= max_files:
-            break
-    return "\n\n".join(chosen) or "No peer file has been written yet."
+    written = [
+        path
+        for path in files
+        if path != exclude
+        and path not in ("todo.md", "RECEIPT.md")
+        and str((files.get(path) or {}).get("content") or "").strip()
+    ]
+    recent = written[-max_files:] if max_files > 0 else written
+    chosen = sorted(recent)
+    sections = [f"--- {path} ---\n{clip(str(files[path]['content']).strip(), tokens)}" for path in chosen]
+    return "\n\n".join(sections) or "No peer file has been written yet."
 
 
 def notes_context(notes: list[str]) -> str:

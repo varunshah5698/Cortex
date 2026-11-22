@@ -301,10 +301,12 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
             await run.emit({"type": "status", "agent": agent.id, "status": "error"})
             return
 
-        if run.depth == "ultra":
-            # Ultra does not wait for the end-of-run review: the freshly written file is
-            # checked now, and its author gets a bounded tool loop to fix it while the
-            # file is still the thing they are thinking about.
+        if run.depth in ("deep", "ultra"):
+            # A deep build does not wait for the end-of-run review: the freshly written
+            # file is checked now, and its author gets a bounded tool loop to fix it while
+            # the file is still the thing they are thinking about. Writing every file once
+            # and only looking at the tree at the end is what made a full-crew run shallow:
+            # one bad file then poisons every file that imports it.
             # Only a file that does not parse is repaired here. Missing peers, an empty
             # sibling or a style warning are facts about the whole tree; the end-of-run
             # review owns them. Repairing them per file made Ultra spin on a stylesheet
@@ -336,7 +338,7 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
                     unit.file,
                     verify.as_findings(immediate),
                     _unit_check,
-                    max_steps=AGENT_STEPS,
+                    max_steps=AGENT_STEPS * 2 if run.depth == "ultra" else AGENT_STEPS,
                 )
 
         lines = sum(run.files[path]["content"].count("\n") + 1 for path in shipped)

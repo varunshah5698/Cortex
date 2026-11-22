@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ai_harness.models import Specialist  # noqa: E402
-from ai_harness.modules import agent_loop, thrash  # noqa: E402
+from ai_harness.modules import agent_loop, hooks, thrash  # noqa: E402
 from ai_harness.modules.llm import Usage  # noqa: E402
 from ai_harness.tools.file_manager import FileManager  # noqa: E402
 
@@ -256,6 +256,38 @@ def test_harness_bookkeeping_cannot_be_rewritten_by_the_loop(tmp_path: Path, mon
     assert not (tmp_path / "todo.md").exists()
     failed = [event for event in run.events if event.get("type") == "tool" and not event.get("ok")]
     assert failed and "harness-owned" in failed[0]["error"], failed
+
+
+def test_a_hook_denial_is_an_observation_not_a_crash(tmp_path: Path, monkeypatch) -> None:
+    body = "<html><body>ok</body></html>\n"
+    run = FakeRun(tmp_path, {"index.html": body})
+    agent = Specialist(id="vega", name="Vega", role="frontend", model="stub")
+    run.specialists = [agent]
+    thrash.reset(run.run_id)
+    hooks.reset()
+    hooks.register(
+        hooks.PRE,
+        hooks.Rule(event=hooks.PRE, match="agent.write", action=hooks.DENY, reason="index.html is frozen"),
+    )
+    script = Script(
+        [
+            '{"tool":"write","args":{"path":"index.html","content":"<html></html>"}}',
+            '{"tool":"done","args":{}}',
+        ]
+    )
+    _run(monkeypatch, script)
+
+    try:
+        changed = asyncio.run(agent_loop.repair(run, agent, "index.html", "frozen", _checker(run, "<body>ok")))
+    finally:
+        hooks.reset()
+
+    # The refusal ends the tool call, not the revision: the file is untouched, the loop
+    # carries on, and the next prompt carries the rule's reason.
+    assert changed is False
+    assert run.fm.read("index.html") == body
+    assert "refused by hook" in script.messages[1][0]["content"]
+    assert any(event.get("type") == "hook" and event.get("action") == "deny" for event in run.events)
 
 
 def test_native_tool_calls_drive_the_same_loop(tmp_path: Path, monkeypatch) -> None:

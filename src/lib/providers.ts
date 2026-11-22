@@ -224,13 +224,25 @@ function usableRoster(list: Specialist[]): Specialist[] {
   );
 }
 
+/**
+ * The team a page opens with when nobody has one yet.
+ *
+ * Only the workshop used to seed the starter team, so a visitor who went straight to the
+ * build room (or the chat) on a fresh deployment had an empty roster and could not start
+ * anything: every card asked for a provider key it did not need. Every entry point
+ * hydrates through here, so the seed belongs here.
+ */
+function seeded(list: Specialist[]): Specialist[] {
+  return list.length ? list : usableRoster(defaultRoster());
+}
+
 export async function hydrateRoster(): Promise<Specialist[]> {
   const server = await readServerRoster();
-  if (!server) return usableRoster(loadRoster());  // unreadable: keep what we have
+  if (!server) return seeded(usableRoster(loadRoster()));  // unreadable: keep what we have
   const local = loadRoster();
   // `mergeKeys` already appends local drafts the server does not know; appending them
   // again here duplicated every draft and made a 3-person team look like 21 cards.
-  const merged = usableRoster(mergeKeys(local, server));
+  const merged = seeded(usableRoster(mergeKeys(local, server)));
   saveRoster(merged);
   return merged;
 }

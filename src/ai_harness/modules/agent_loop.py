@@ -43,7 +43,7 @@ from ..config.settings import (
 )
 from ..models import Specialist
 from ..utils.validators import UnsafePath
-from . import code_search, llm, progress, prompts, protected, shell, skills, thrash, tool_log
+from . import code_search, hooks, llm, progress, prompts, protected, shell, skills, thrash, tool_log
 
 TOOLS = ("list", "read", "search", "grep", "shell", "edit", "write", "skill", "check", "delegate", "done")
 
@@ -880,6 +880,10 @@ async def repair(
                                 call_log.fail(str(exc))
                                 observation = f"ERROR: {type(exc).__name__}: {exc}"
                             call_log.set_result(observation)
+                    except hooks.Denied as exc:
+                        # A hook refusal is an observation like any other refusal: the model
+                        # can read the rule's reason and try a different command.
+                        observation = f"ERROR: {exc}. Pick a different command, or finish without it."
                     except thrash.Thrash as exc:
                         observation = f"ERROR: {exc}. Change the call instead of repeating it."
                 state.last_observation = observation
@@ -911,6 +915,11 @@ async def repair(
                         call_log.fail(str(exc))
                         observation = f"ERROR: {type(exc).__name__}: {exc}"
                     call_log.set_result(observation)
+            except hooks.Denied as exc:
+                # The refusal is already in the transcript as a `hook` event. Aborting the
+                # repair loop because one path is frozen would end the whole revision; the
+                # loop instead sees the reason and can choose another path.
+                observation = f"ERROR: {exc}. Pick a different path, or finish without it."
             except thrash.Thrash as exc:
                 observation = f"ERROR: {exc}. Change the call instead of repeating it."
             if state.last_written:
