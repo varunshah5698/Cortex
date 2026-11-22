@@ -15,6 +15,7 @@ Two rules this module enforces rather than documents:
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
 import os
 import secrets
@@ -351,6 +352,10 @@ class ProviderCheck(BaseModel):
     baseUrl: str = ""
     kind: str = ""
     apiKey: str = ""
+    # The model this row will actually call. Without it the test only proved the endpoint
+    # answered — a typo'd model name passed "Test connection" and then failed on the first
+    # real call with `model_not_found`, which reads as the provider being broken.
+    model: str = ""
 
 
 class ChatTurn(BaseModel):
@@ -598,15 +603,50 @@ async def providers_test(payload: ProviderCheck) -> JSONResponse:
     # A key typed but not yet saved wins, then the stored one, then the env fallback.
     key = payload.apiKey.strip() or _stored_key(payload.id, kind)
     headers = {"Authorization": f"Bearer {key}"} if key else {}
+    # The model the row will actually call: what was typed, else what is stored.
+    wanted = (payload.model or (stored.model if stored else "") or "").strip()
 
     try:
         async with httpx.AsyncClient(timeout=12.0) as client:
             response = await client.get(f"{base}/models", headers=headers)
         if response.status_code == 401:
             return JSONResponse({"ok": False, "detail": "401 — check the API key"})
-        return JSONResponse({"ok": response.status_code < 500, "detail": f"HTTP {response.status_code}"})
+        if response.status_code >= 500:
+            return JSONResponse({"ok": False, "detail": f"HTTP {response.status_code}"})
     except httpx.HTTPError as exc:
         return JSONResponse({"ok": False, "detail": str(exc)[:160]})
+
+    # Reachability is not the whole answer. A provider can answer `/models` and still
+    # reject every completion because the row names a model it does not serve — the typo
+    # `eepseek-ai/...` for `deepseek-ai/...` passed this endpoint and then failed the first
+    # real call with `model_not_found`. Check the name against the list the provider
+    # publishes, and say the closest match so the fix is obvious.
+    ids: list[str] = []
+    try:
+        body = response.json()
+        for item in body.get("data") or []:
+            name = item.get("id") if isinstance(item, dict) else None
+            if isinstance(name, str) and name:
+                ids.append(name)
+    except (ValueError, AttributeError):
+        ids = []
+
+    if wanted and ids and wanted not in ids:
+        close = difflib.get_close_matches(wanted, ids, n=1, cutoff=0.6)
+        hint = f" Did you mean {close[0]!r}?" if close else ""
+        return JSONResponse(
+            {
+                "ok": False,
+                "detail": f"the endpoint answers, but it does not serve model {wanted!r}.{hint}",
+                "models": ids[:40],
+                "count": len(ids),
+            }
+        )
+
+    detail = f"HTTP {response.status_code}"
+    if wanted:
+        detail = f"connected · {wanted} is available"
+    return JSONResponse({"ok": True, "detail": detail, "models": ids[:40], "count": len(ids)})
 
 
 @app.post("/api/chat")

@@ -229,6 +229,7 @@ export async function testProvider(specialist: Specialist): Promise<ProviderTest
         baseUrl: specialist.baseUrl,
         apiKey: specialist.apiKey,
         kind: specialist.kind,
+        model: specialist.model,
       }),
     });
     if (!res.ok) return { ok: false, error: `Cortex responded ${res.status}` };
