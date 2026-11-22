@@ -117,6 +117,18 @@ def test_code_search_caps_the_matches(tmp_path: Path) -> None:
     assert "stopped at" in observation
 
 
+def test_code_search_refuses_a_catastrophic_pattern_instead_of_stalling(tmp_path: Path, monkeypatch) -> None:
+    import time
+
+    monkeypatch.setattr(code_search, "REGEX_BUDGET_SECONDS", 0.05)
+    state = _state(tmp_path, {"evil.txt": "a" * 30 + "b\n"})
+    started = time.monotonic()
+    with pytest.raises(agent_loop.ToolError) as exc:
+        state.execute("grep", {"pattern": r"(a+)+$"})
+    assert "took longer" in str(exc.value)
+    assert time.monotonic() - started < 2
+
+
 # ---------- shell ----------
 
 

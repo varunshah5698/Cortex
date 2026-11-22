@@ -120,7 +120,7 @@ def _bounded(
     try:
         if not receiver.poll(REGEX_BUDGET_SECONDS):
             raise SearchError(
-                f"pattern {pattern!r} exceeded the {REGEX_BUDGET_SECONDS:g}s search budget; "
+                f"pattern {pattern!r} took longer than the {REGEX_BUDGET_SECONDS:g}s search budget; "
                 "simplify it (nested quantifiers such as (a+)+ backtrack catastrophically)"
             )
         try:

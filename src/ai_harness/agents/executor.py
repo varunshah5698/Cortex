@@ -110,13 +110,22 @@ async def _bounded_stream(agent: Specialist, messages: list[dict[str, str]], on_
     """
     stats = llm.StreamStats()
     seen = 0
-    async for _kind, text in llm.stream(agent, messages, think=True, stats=stats):
-        seen += len(text)
-        if seen <= limit:
-            await on_think(text)
-        else:
-            await on_think("\n…[reasoning budget reached — moving to the file]\n")
-            break
+    # The generator must be closed explicitly, not merely abandoned. `llm.stream` settles
+    # the budget in a `finally`, and that `finally` runs when the generator is closed or
+    # garbage-collected — not when a `break` leaves the `async for`. Breaking without
+    # closing lost the spend for every cut-short reasoning call, so the run's budget
+    # under-counted exactly the calls this bound exists to stop.
+    stream = llm.stream(agent, messages, think=True, stats=stats)
+    try:
+        async for _kind, text in stream:
+            seen += len(text)
+            if seen <= limit:
+                await on_think(text)
+            else:
+                await on_think("\n…[reasoning budget reached — moving to the file]\n")
+                break
+    finally:
+        await stream.aclose()
     return stats
 
 
