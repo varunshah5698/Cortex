@@ -70,3 +70,59 @@ def test_a_live_vercel_deployment_serves_and_is_removed(tmp_path: Path) -> None:
             await service.stop()
 
     asyncio.run(run())
+
+
+# ---------- credentials ----------
+
+
+def test_a_missing_login_is_reported_before_a_project_is_created(tmp_path: Path, monkeypatch) -> None:
+    """The server has no `vercel login`, so `deploy` must say so instead of exiting 1.
+
+    Render installs the CLI into `.vercel-cli` but never authenticates it. The old path
+    created a project, ran `deploy`, and returned `Vercel exited 1` with no reason — the
+    build room showed a bare exit code and a `{"detail":"Not Found"}` iframe.
+    """
+    (tmp_path / "index.html").write_text("ok", encoding="utf-8")
+    monkeypatch.setattr(vercel_runner, "VERCEL_TOKEN", "")
+    monkeypatch.setattr(vercel_runner, "_config_dirs", lambda: [tmp_path / "no-such-config"])
+
+    ok, why = vercel_runner.credentials()
+    assert ok is False
+    assert "not authenticated" in why
+    assert "HARNESS_VERCEL_TOKEN" in why
+
+    import asyncio
+
+    with pytest.raises(vercel_runner.VercelError) as exc:
+        asyncio.run(vercel_runner.deploy("run-1", tmp_path))
+    assert "not authenticated" in str(exc.value)
+
+
+def test_a_token_counts_as_credentials(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(vercel_runner, "VERCEL_TOKEN", "tok")
+    monkeypatch.setattr(vercel_runner, "_config_dirs", lambda: [tmp_path / "no-such-config"])
+    ok, why = vercel_runner.credentials()
+    assert ok is True and why == ""
+
+
+def test_a_stored_login_counts_as_credentials(tmp_path: Path, monkeypatch) -> None:
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / "auth.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(vercel_runner, "VERCEL_TOKEN", "")
+    monkeypatch.setattr(vercel_runner, "_config_dirs", lambda: [config])
+    ok, _ = vercel_runner.credentials()
+    assert ok is True
+
+
+def test_the_macos_config_location_is_searched(monkeypatch) -> None:
+    """`~/.vercel` is not where the CLI stores its login on macOS.
+
+    A check that only looked there reported "not authenticated" on a machine where
+    `vercel whoami` worked — a false negative is worse than no check.
+    """
+    monkeypatch.setattr(vercel_runner.os, "getenv", lambda key, default="": default)
+    monkeypatch.setattr(vercel_runner.sys, "platform", "darwin")
+    dirs = [str(path) for path in vercel_runner._config_dirs()]
+    assert any("Library/Application Support/com.vercel.cli" in path for path in dirs), dirs
+    assert any(path.endswith("/.vercel") for path in dirs), dirs

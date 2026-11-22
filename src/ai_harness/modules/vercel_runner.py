@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import shutil
+import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -166,11 +168,57 @@ class VercelService:
             self.url = ""
 
 
+def _config_dirs() -> list[Path]:
+    """Every place the CLI may have written its login, newest convention first.
+
+    `~/.vercel` is the documented location, but the CLI on macOS uses
+    `~/Library/Application Support/com.vercel.cli` and honours `VERCEL_CONFIG_DIR`. A check
+    that only looked at `~/.vercel` reported "not authenticated" on a machine where
+    `vercel whoami` worked, which is worse than no check at all.
+    """
+    dirs: list[Path] = []
+    override = os.getenv("VERCEL_CONFIG_DIR", "").strip()
+    if override:
+        dirs.append(Path(override))
+    dirs.append(Path.home() / ".vercel")
+    if sys.platform == "darwin":
+        dirs.append(Path.home() / "Library" / "Application Support" / "com.vercel.cli")
+    dirs.append(Path(os.getenv("XDG_CONFIG_HOME") or (Path.home() / ".config")) / "com.vercel.cli")
+    return dirs
+
+
+def credentials() -> tuple[bool, str]:
+    """Whether this host can authenticate at all, and why not when it cannot.
+
+    The CLI falls back to a stored login from an interactive `vercel login`. A server has
+    no such file — Render builds the CLI into `.vercel-cli` but never logs in — so `deploy`
+    fails with a bare exit 1 and "No existing credentials found", which the build room
+    could only render as `Vercel exited 1`. Check first and say the real thing.
+    """
+    if VERCEL_TOKEN:
+        return True, ""
+    for config in _config_dirs():
+        for name in ("auth.json", "auth"):
+            if (config / name).is_file():
+                return True, ""
+    searched = ", ".join(str(path) for path in _config_dirs())
+    return False, (
+        "Vercel is not authenticated on this host: no HARNESS_VERCEL_TOKEN is set and there is "
+        f"no CLI login in {searched}. Set HARNESS_VERCEL_TOKEN in the service environment, or run "
+        "`vercel login` where the harness runs."
+    )
+
+
 async def deploy(run_id: str, workspace: Path) -> VercelService:
     if not available():
         raise VercelError(f"Vercel CLI is not installed ({VERCEL_BIN})")
     if not supported(workspace):
         raise VercelError("Vercel mode needs a package.json or index.html; this run is not a static/Node tree")
+    ok, why = credentials()
+    if not ok:
+        # Fail before creating a project: a half-created project with no deployment is a
+        # leak that the TTL has to clean up, and the reason is more useful than an exit code.
+        raise VercelError(why)
     project = _project(run_id)
     workdir = Path(tempfile.mkdtemp(prefix=f"{project}-"))
     _copy(workspace, workdir)
@@ -251,7 +299,11 @@ async def deploy(run_id: str, workspace: Path) -> VercelService:
     service.logs = [line for line in text.splitlines() if line.strip()]
     if process.returncode != 0:
         service.state = "failed"
-        service.detail = f"Vercel exited {process.returncode}"
+        # The CLI's own last line is the reason ("No existing credentials found", a scope
+        # error, a build error). Reporting only the exit code left the build room showing
+        # `Vercel exited 1` with nothing to act on.
+        reason = next((line.strip() for line in reversed(service.logs) if line.strip()), "")
+        service.detail = f"Vercel exited {process.returncode}" + (f": {reason[:300]}" if reason else "")
         service.exit_code = process.returncode
         shutil.rmtree(workdir, ignore_errors=True)
         return service

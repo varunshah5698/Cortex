@@ -24,6 +24,15 @@ services:
         value: "0"
       - key: HARNESS_BROWSER_INTERACT
         value: "0"
+      # Vercel mode deploys a static/Node run to a temporary project. The CLI is built
+      # into .vercel-cli by buildCommand, but a server has no `vercel login`, so without
+      # this token every deploy fails with "No existing credentials found". `sync: false`
+      # means Render prompts for the value instead of reading it from this file.
+      - key: HARNESS_VERCEL_TOKEN
+        sync: false
+      # Optional: the Vercel team/user the deployments belong to.
+      # - key: HARNESS_VERCEL_SCOPE
+      #   sync: false
       # App-level accounts: sign-up / sign-in. No HTTP Basic auth.
       # Accounts and sessions live in HARNESS_AUTH_DB. `/var/tmp` is wiped on restart,
       # so the login page warns and the free plan cannot keep accounts. Upgrade the
