@@ -22,6 +22,8 @@ loop is already allowed to read and nothing else.
 from __future__ import annotations
 
 import re
+import signal
+import threading
 from dataclasses import dataclass
 
 MAX_MATCHES = 60
@@ -29,6 +31,10 @@ MAX_LINE = 200
 MAX_FILE_BYTES = 256 * 1024
 # A pattern a model wrote can backtrack catastrophically; a search is not worth a stall.
 REGEX_BUDGET_SECONDS = 2.0
+
+
+class _BudgetExceeded(Exception):
+    """Raised from the SIGALRM handler to stop a pattern that will not finish."""
 
 
 @dataclass(frozen=True)
@@ -82,23 +88,46 @@ def search(
     prefix = scope.strip().strip("./")
     hits: list[Hit] = []
 
-    for item in files:
-        path = str(item.get("path") or "")
-        if not path or not _wanted(path, extension):
-            continue
-        if prefix and not path.startswith(prefix):
-            continue
-        if int(item.get("bytes") or 0) > MAX_FILE_BYTES:
-            continue
-        try:
-            body = read(path)
-        except Exception:  # noqa: BLE001 - an unreadable file is skipped, not fatal
-            continue
-        for number, line in enumerate(body.splitlines(), start=1):
-            if regex.search(line):
-                hits.append(Hit(path=path, line=number, text=line.strip()[:MAX_LINE]))
-                if len(hits) >= limit:
-                    return hits
+    # A model-supplied regex can backtrack for minutes on one line. An alarm interrupts
+    # the C match loop; it is only available on the main thread, which is where the
+    # harness runs its tools.
+    previous_handler = previous_timer = None
+    # shortcut: only the main thread can take SIGALRM; harness tools run on the loop thread
+    armed = threading.current_thread() is threading.main_thread()
+
+    def expire(_signum, _frame):
+        raise _BudgetExceeded
+
+    if armed:
+        previous_handler = signal.signal(signal.SIGALRM, expire)
+        previous_timer = signal.getitimer(signal.ITIMER_REAL)
+        signal.setitimer(signal.ITIMER_REAL, REGEX_BUDGET_SECONDS)
+    try:
+        for item in files:
+            path = str(item.get("path") or "")
+            if not path or not _wanted(path, extension):
+                continue
+            if prefix and not path.startswith(prefix):
+                continue
+            if int(item.get("bytes") or 0) > MAX_FILE_BYTES:
+                continue
+            try:
+                body = read(path)
+            except Exception:  # noqa: BLE001 - an unreadable file is skipped, not fatal
+                continue
+            for number, line in enumerate(body.splitlines(), start=1):
+                if regex.search(line):
+                    hits.append(Hit(path=path, line=number, text=line.strip()[:MAX_LINE]))
+                    if len(hits) >= limit:
+                        return hits
+    except _BudgetExceeded as exc:
+        raise SearchError(
+            f"pattern {pattern!r} took longer than {REGEX_BUDGET_SECONDS:g}s; simplify it or narrow the scope"
+        ) from exc
+    finally:
+        if armed:
+            signal.setitimer(signal.ITIMER_REAL, *previous_timer)
+            signal.signal(signal.SIGALRM, previous_handler)
     return hits
 
 

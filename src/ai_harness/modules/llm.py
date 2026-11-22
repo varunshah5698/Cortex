@@ -176,34 +176,51 @@ async def stream(
     # working provider still gets its time; only a call that outlives `STREAM_SECONDS` is
     # cut, and it is cut with a ProviderError the nodes already handle.
     deadline = started + STREAM_SECONDS if STREAM_SECONDS else None
-    async for kind, text in _adapter_stream(
-        spec,
-        messages,
-        think=think,
-        temperature=TEMPERATURE if temperature is None else temperature,
-        json_mode=json_mode,
-        stats=stats,
-    ):
-        if deadline is not None and time.perf_counter() > deadline:
-            # Closing the generator closes the provider connection; the caller keeps the
-            # partial text in `stats`, which is what lets a truncated answer still be
-            # useful instead of vanishing.
-            stats.truncated = True
-            await runtime.emit(
-                {
-                    "type": "stream-cut",
-                    "agent": spec.id,
-                    "model": spec.model,
-                    "seconds": round(time.perf_counter() - started, 1),
-                    "message": (
-                        f"{spec.name}'s call ran past its {STREAM_SECONDS:.0f}s bound and was cut; "
-                        "the text is a prefix, not a complete answer"
-                    ),
-                }
-            )
-            break
-        yield (kind, text)
+    try:
+        async for kind, text in _adapter_stream(
+            spec,
+            messages,
+            think=think,
+            temperature=TEMPERATURE if temperature is None else temperature,
+            json_mode=json_mode,
+            stats=stats,
+        ):
+            if deadline is not None and time.perf_counter() > deadline:
+                # Closing the generator closes the provider connection; the caller keeps the
+                # partial text in `stats`, which is what lets a truncated answer still be
+                # useful instead of vanishing.
+                stats.truncated = True
+                await runtime.emit(
+                    {
+                        "type": "stream-cut",
+                        "agent": spec.id,
+                        "model": spec.model,
+                        "seconds": round(time.perf_counter() - started, 1),
+                        "message": (
+                            f"{spec.name}'s call ran past its {STREAM_SECONDS:.0f}s bound and was cut; "
+                            "the text is a prefix, not a complete answer"
+                        ),
+                    }
+                )
+                break
+            yield (kind, text)
+    finally:
+        # Settlement belongs in `finally`, not after the loop. A caller that breaks out of
+        # the stream early — `_bounded_stream` does exactly that when a model will not stop
+        # reasoning — closes this generator before the code below ever runs. The tokens were
+        # already spent at the provider; charging them only on a clean exhaustion meant the
+        # budget silently under-counted every reasoning and critique call. A run could then
+        # exceed its own cap by however much it had been cut short.
+        await _settle(spec, stats, started, budget, messages)
 
+
+async def _settle(spec: Specialist, stats: StreamStats, started: float, budget, messages: list[dict[str, str]]) -> None:  # noqa: ANN001
+    """Price a finished (or abandoned) stream and charge it to the budget.
+
+    Called from `stream`'s `finally`, so it runs whether the caller exhausted the stream,
+    broke out of it, or the provider raised. Charging only on clean exhaustion lost the
+    spend for every call a bounded consumer cut short.
+    """
     # A provider that omits a count gets an estimate, and the ledger says so.
     if not stats.usage.prompt_tokens:
         stats.usage.estimated = True
