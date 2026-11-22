@@ -714,6 +714,16 @@ export default function Build() {
     return previewUrl(id);
   };
 
+  // A production build serves `/api` and the UI, not `/preview/<run>/` — that is the local
+  // artifact origin on port 8001. Framing it answered with raw `{"detail":"Not Found"}`
+  // JSON, which read as "the project is broken" even when only the preview was missing.
+  // The only previews a deployed room can reach are a cloud provider's own URL or an
+  // explicit VITE_PREVIEW_URL.
+  const frameable =
+    !import.meta.env.PROD ||
+    Boolean(import.meta.env.VITE_PREVIEW_URL) ||
+    Boolean(service?.state === "ready" && service.url && service.remote);
+
   // Poll while the service is doing something, and for a short window after ready
   // while the automatic browser check is still in flight. After that, `ready` is final
   // and the Browser button is the way to ask again.
@@ -1439,14 +1449,16 @@ export default function Build() {
                         <button onClick={() => setFrame((v) => v + 1)} title="Reload">
                           <Icon name="history" size={13} />
                         </button>
-                        <a
-                          href={servedUrl(runId)}
-                          target="_blank"
-                          rel="noreferrer"
-                          title="Open in a tab"
-                        >
-                          <Icon name="link" size={13} />
-                        </a>
+                        {frameable && (
+                          <a
+                            href={servedUrl(runId)}
+                            target="_blank"
+                            rel="noreferrer"
+                            title="Open in a tab"
+                          >
+                            <Icon name="link" size={13} />
+                          </a>
+                        )}
                       </div>
                     </div>
                     {service && (
@@ -1494,21 +1506,22 @@ export default function Build() {
                       own origin's storage and nothing else, it cannot reach this document, and
                       `/api` on 8000 refuses a foreign `Origin` header.
                     */}
-                    {import.meta.env.PROD && !import.meta.env.VITE_PREVIEW_URL && !service?.remote ? (
-                      <div className="pv-empty">
-                        <Icon name="eye" size={22} />
-                        <p>
-                          Source previews run on the local preview origin. Use <b>Run</b> to publish this build
-                          instead.
-                        </p>
-                      </div>
-                    ) : (
+                    {frameable ? (
                       <iframe
                         key={frame}
                         title="preview"
                         sandbox="allow-scripts allow-forms allow-popups allow-modals allow-same-origin"
                         src={servedUrl(runId)}
                       />
+                    ) : (
+                      <div className="pv-empty">
+                        <Icon name="eye" size={22} />
+                        <p>
+                          {service?.state === "failed"
+                            ? `${service.detail}. The server log has the full build output.`
+                            : "Source previews run on the local preview origin. Use Run to publish this build instead."}
+                        </p>
+                      </div>
                     )}
                     {service && (
                       <div className="pv-log">

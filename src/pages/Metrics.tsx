@@ -177,39 +177,41 @@ export default function Metrics() {
             <h2>Ledger</h2>
             <span>everything Cortex measured</span>
           </header>
-          <table className="mtx-table">
-            <thead>
-              <tr>
-                <th>specialist</th>
-                <th>role</th>
-                <th>model</th>
-                <th>calls</th>
-                <th>prompt</th>
-                <th>completion</th>
-                <th>cost</th>
-                <th>time</th>
-              </tr>
-            </thead>
-            <tbody>
-              {agents.map((agent) => (
-                <tr key={agent.id}>
-                  <td>
-                    <i style={{ ["--tone" as string]: tone(agent.role) }} />
-                    {agent.name}
-                  </td>
-                  <td>{agent.role}</td>
-                  <td>
-                    <code>{agent.model}</code>
-                  </td>
-                  <td>{agent.calls}</td>
-                  <td>{fmtNumber(agent.prompt_tokens)}</td>
-                  <td>{fmtNumber(agent.completion_tokens)}</td>
-                  <td>${(agent.cost_usd ?? 0).toFixed(4)}</td>
-                  <td>{fmtMs(agent.ms)}</td>
+          <div className="mtx-table-wrap">
+            <table className="mtx-table">
+              <thead>
+                <tr>
+                  <th>specialist</th>
+                  <th>role</th>
+                  <th>model</th>
+                  <th>calls</th>
+                  <th>prompt</th>
+                  <th>completion</th>
+                  <th>cost</th>
+                  <th>time</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {agents.map((agent) => (
+                  <tr key={agent.id}>
+                    <td>
+                      <i style={{ ["--tone" as string]: tone(agent.role) }} />
+                      {agent.name}
+                    </td>
+                    <td>{agent.role}</td>
+                    <td>
+                      <code>{agent.model}</code>
+                    </td>
+                    <td>{agent.calls}</td>
+                    <td>{fmtNumber(agent.prompt_tokens)}</td>
+                    <td>{fmtNumber(agent.completion_tokens)}</td>
+                    <td>${(agent.cost_usd ?? 0).toFixed(4)}</td>
+                    <td>{fmtMs(agent.ms)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           <footer className="mtx-foot">
             <span>
               slowest: <b>{slowest?.name ?? "—"}</b>

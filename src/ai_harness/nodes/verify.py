@@ -549,6 +549,11 @@ async def run(state: RunState, stage: str = "post-build") -> dict:
     if criteria:
         stats = intent.coverage(state.files, criteria)
         coverage = f" · intent {stats['found']}/{stats['criteria']} named"
+        # Rewrite the checklist now that `found` is known. It is written once at planning
+        # time, before a single file exists, so without this the file on disk is a
+        # permanent lie: every box unticked on a tree that satisfies most of them. The
+        # receipt and the build room both read this file, so it has to track the tree.
+        intent.write(state, criteria)
     await state.emit(
         {
             "type": "message",

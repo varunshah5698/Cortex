@@ -957,17 +957,53 @@ async def serve_start(run_id: str, restart: bool = False, approve: bool = False)
                 }
             )
             return payload
+        failure = ""
         try:
             deployed = await vercel_runner.deploy(run_id, workspace)
         except vercel_runner.VercelError as exc:
-            raise HTTPException(409, str(exc)) from None
+            deployed = None
+            failure = str(exc)
+        if deployed is not None and deployed.state == "ready":
+            _vercel_runs[run_id] = deployed
+            if run is not None:
+                _record_build(run, deployed)
+                if BROWSER_CHECK:
+                    task = asyncio.create_task(_browser_after_ready(run_id))
+                    _browser_tasks.add(task)
+                    task.add_done_callback(_browser_tasks.discard)
+            return deployed.as_dict()
+        # A temporary Vercel project that could not be created or built leaves the run with
+        # nowhere to be seen: no other host has these files. When this instance also has the
+        # separate cloud runner, use it and say why — never a dead preview with the reason
+        # buried in a log.
+        failure = failure or (deployed.detail if deployed is not None else "the Vercel deployment failed")
+        if remote_runner.available():
+            if run is not None:
+                await run.emit(
+                    {
+                        "type": "message",
+                        "from": "verify",
+                        "kind": "review",
+                        "text": f"Vercel could not deploy this run ({failure}); serving it on the cloud runner instead.",
+                    }
+                )
+            try:
+                remote = await remote_runner.start(run_id, workspace)
+            except remote_runner.CloudRunnerError as exc:
+                raise HTTPException(409, f"{failure}; the cloud runner refused it too: {exc}") from None
+            _remote_runs[run_id] = remote
+            if run is not None:
+                _record_build(run, remote)
+                if BROWSER_CHECK:
+                    task = asyncio.create_task(_browser_after_ready(run_id))
+                    _browser_tasks.add(task)
+                    task.add_done_callback(_browser_tasks.discard)
+            return remote.as_dict()
+        if deployed is None:
+            raise HTTPException(409, failure) from None
         _vercel_runs[run_id] = deployed
         if run is not None:
             _record_build(run, deployed)
-            if BROWSER_CHECK and deployed.state == "ready":
-                task = asyncio.create_task(_browser_after_ready(run_id))
-                _browser_tasks.add(task)
-                task.add_done_callback(_browser_tasks.discard)
         return deployed.as_dict()
 
     # A finished local run is previewed on the click that was already made. The

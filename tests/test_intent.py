@@ -7,6 +7,7 @@ These tests pin the missing question, and just as importantly pin that the senso
 quiet on a build that did answer the request: a sensor that cries wolf gets ignored.
 """
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -257,3 +258,46 @@ def test_the_contract_lists_every_criterion_for_the_code_prompt():
 def test_the_contract_is_never_empty_so_the_prompt_always_formats():
     # `prompts.CODE.format` needs a value; an empty string would leave a blank section.
     assert intent.contract([]).strip()
+
+
+# ---------- the checklist on disk ----------
+
+
+def test_the_checklist_on_disk_tracks_the_tree_not_the_empty_plan(tmp_path: Path):
+    """`acceptance.md` must not stay a snapshot of the moment before the build.
+
+    It is written once at planning time, when no file exists and every `found` is False.
+    Nothing rewrote it afterwards, so the file a human and the receipt read said "nothing
+    was built" on a tree that satisfied most of the request. This drives `verify.run`,
+    which is where the rewrite belongs — asserting on `intent.write` alone would pass
+    whether or not the verifier ever called it.
+    """
+
+    class _Run:
+        prompt = ASK
+        workspace = tmp_path
+        acceptance = None
+        planned_files: list[str] = []
+
+        def __init__(self) -> None:
+            self.files = _answered()
+            self.events: list[dict] = []
+
+        async def emit(self, event: dict) -> None:
+            self.events.append(event)
+
+    run = _Run()
+    run.acceptance = intent.extract(ASK)
+
+    # Planning time: no files yet, so the checklist is all unticked.
+    intent.write(run, run.acceptance)
+    before = (tmp_path / intent.FILENAME).read_text()
+    assert "- [ ]" in before
+    assert "- [x]" not in before
+
+    # A verification pass now that the tree exists must update the file on disk.
+    asyncio.run(verify.run(run, "post-build"))
+
+    after = (tmp_path / intent.FILENAME).read_text()
+    assert "- [x]" in after, "verify.run did not rewrite the checklist after coverage was known"
+    assert after.count("- [x]") >= 3

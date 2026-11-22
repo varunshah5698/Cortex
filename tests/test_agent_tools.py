@@ -9,6 +9,7 @@ an unapproved command never reaches a process at all.
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -94,12 +95,38 @@ def test_grep_skips_dotfiles_and_harness_bookkeeping(tmp_path: Path) -> None:
     assert "todo.md" not in observation
 
 
+def test_grep_kills_a_catastrophic_pattern_at_the_budget(tmp_path: Path, monkeypatch) -> None:
+    # `(a+)+$` against a line that does not match backtracks exponentially, and `re` cannot
+    # be interrupted; the tool has to kill the process running it or the run stalls here.
+    monkeypatch.setattr(code_search, "REGEX_BUDGET_SECONDS", 0.2)
+    state = _state(tmp_path, {"app.py": "a" * 32 + "!\n"})
+    started = time.monotonic()
+
+    with pytest.raises(agent_loop.ToolError) as exc:
+        state.execute("grep", {"pattern": "(a+)+$"})
+
+    assert time.monotonic() - started < 10
+    assert "search budget" in str(exc.value)
+
+
 def test_code_search_caps_the_matches(tmp_path: Path) -> None:
     body = "\n".join("needle" for _ in range(200))
     state = _state(tmp_path, {"big.txt": body})
     observation = state.execute("grep", {"pattern": "needle"})
     assert observation.count("big.txt:") == code_search.MAX_MATCHES
     assert "stopped at" in observation
+
+
+def test_code_search_refuses_a_catastrophic_pattern_instead_of_stalling(tmp_path: Path, monkeypatch) -> None:
+    import time
+
+    monkeypatch.setattr(code_search, "REGEX_BUDGET_SECONDS", 0.05)
+    state = _state(tmp_path, {"evil.txt": "a" * 30 + "b\n"})
+    started = time.monotonic()
+    with pytest.raises(agent_loop.ToolError) as exc:
+        state.execute("grep", {"pattern": r"(a+)+$"})
+    assert "took longer" in str(exc.value)
+    assert time.monotonic() - started < 2
 
 
 # ---------- shell ----------

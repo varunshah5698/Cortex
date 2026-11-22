@@ -46,6 +46,12 @@ async def run(command: str, workspace: Path, timeout: float = 10.0) -> str:
         stdout, _ = await asyncio.wait_for(process.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
         _kill_tree(process)
+        # `communicate()` was cancelled by the wait. Reap the child so it does not stay a
+        # zombie and the transport's pipe is closed before the tool returns.
+        try:
+            await process.wait()
+        except (ProcessLookupError, OSError):
+            pass
         return "[timeout]"
     return stdout.decode("utf-8", "replace")[:4000]
 

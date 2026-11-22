@@ -144,8 +144,32 @@ def seed(run, units: list) -> list[Task]:
     return tasks
 
 
+def _reaches(tasks: list[Task], start: str, goal: str) -> bool:
+    """Whether `goal` is reachable from `start` by following `blockedBy` edges."""
+    by_id = {task.id: task for task in tasks}
+    seen: set[str] = set()
+    stack = [start]
+    while stack:
+        current = stack.pop()
+        if current == goal:
+            return True
+        if current in seen:
+            continue
+        seen.add(current)
+        node = by_id.get(current)
+        if node is not None:
+            stack.extend(node.blockedBy)
+    return False
+
+
 def depends(run, task_id: str, *blockers: str) -> list[Task]:
-    """Declare that `task_id` may not start until every named blocker is done."""
+    """Declare that `task_id` may not start until every named blocker is done.
+
+    An edge that would close a cycle is refused: `ready()` requires every blocker to be
+    done, so `a` waiting on `b` and `b` waiting on `a` is a task that can never start and
+    can never say why. Unknown ids and self-edges are ignored for the same reason — an
+    edge to a task nobody will ever complete is a silent deadlock too.
+    """
     with _LOCK:
         tasks = load(run)
         known = {task.id for task in tasks}
@@ -153,8 +177,13 @@ def depends(run, task_id: str, *blockers: str) -> list[Task]:
         if target is None:
             return tasks
         for blocker in blockers:
-            if blocker in known and blocker != task_id and blocker not in target.blockedBy:
-                target.blockedBy.append(blocker)
+            if blocker not in known or blocker == task_id or blocker in target.blockedBy:
+                continue
+            # Refuse the edge when `task_id` already blocks `blocker` (directly or by
+            # chain); adding it would make both tasks permanently unready.
+            if _reaches(tasks, blocker, task_id):
+                continue
+            target.blockedBy.append(blocker)
         _save(run, tasks)
         return tasks
 

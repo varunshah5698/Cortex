@@ -1410,3 +1410,103 @@ textarea {
     padding-bottom: 16px;
   }
 }
+
+/* ---------- phone ---------- */
+
+/* `site.css` also defines `.hero` for the landing page; these rules are scoped to the
+   chat page so the two layouts cannot fight over the same class. */
+@media (max-width: 640px) {
+  .page {
+    padding: 0;
+  }
+  .frame {
+    border-radius: 0;
+    max-height: none;
+    box-shadow: none;
+  }
+  .main {
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+
+  /* The model chip and four actions cannot share 350px. Wrap the actions onto their
+     own row instead of clipping the last button. */
+  .topbar {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 14px 14px 0;
+  }
+  .topbar-actions {
+    margin-left: auto;
+    gap: 7px;
+  }
+  .model-role {
+    display: none;
+  }
+
+  .hero {
+    padding: 24px 16px 0;
+    max-width: 100%;
+  }
+  .greeting {
+    padding-top: 8px;
+  }
+  .greeting h1 {
+    font-size: 30px;
+    line-height: 1.12;
+  }
+  .hello {
+    margin-top: 16px;
+    font-size: 22px;
+  }
+  .orb {
+    width: 118px;
+    height: 118px;
+  }
+  /* A flex item will not shrink below its widest child unless told to. The composer's
+     tool row is wider than a phone, and without this the whole hero grows with it and
+     the text is clipped by the frame. */
+  .hero-stack {
+    min-width: 0;
+    padding-left: 0;
+    padding-right: 0;
+    margin-top: 28px;
+  }
+  .composer-tools {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .composer-right {
+    margin-left: auto;
+  }
+  .send-estimate {
+    display: none;
+  }
+  .suggestions {
+    gap: 10px;
+    margin-top: 12px;
+  }
+  .suggestion {
+    min-height: 0;
+    padding: 12px 14px 14px;
+  }
+  .suggestion-title {
+    margin-top: 10px;
+  }
+  .footer-note {
+    font-size: 10.5px;
+    padding-bottom: 8px;
+  }
+  .floating {
+    display: none;
+  }
+  .chat-inner,
+  .dock {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+  .msg-user {
+    max-width: 88%;
+  }
+}
