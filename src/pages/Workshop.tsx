@@ -424,8 +424,8 @@ export default function Workshop() {
           </span>
         </div>
         <div className="ws-bar-actions">
-          <button className="link-btn" onClick={() => navigate("build")}>
-            Build room
+          <button className="link-btn" onClick={() => navigate("app")}>
+            Workspace
           </button>
           <button className="link-btn" onClick={() => navigate("landing")}>
             Back to site

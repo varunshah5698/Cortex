@@ -38,7 +38,15 @@ type IconName =
   | "layers"
   | "shield"
   | "wallet"
-  | "route";
+  | "route"
+  | "panel"
+  | "panelOff"
+  | "code"
+  | "terminal"
+  | "clock"
+  | "flock"
+  | "check2"
+  | "x";
 
 export function Icon({
   name,
@@ -342,6 +350,65 @@ export function Icon({
           <circle cx="6" cy="6.5" r="2.4" />
           <circle cx="18" cy="17.5" r="2.4" />
           <path d="M8.4 6.5h5.1a3.4 3.4 0 0 1 0 6.8h-3a3.4 3.4 0 0 0 0 6.9h5.1" />
+        </svg>
+      );
+    case "panel":
+      return (
+        <svg {...common}>
+          <rect x="3" y="4.5" width="18" height="15" rx="3" />
+          <path d="M14.5 4.5v15" />
+        </svg>
+      );
+    case "panelOff":
+      return (
+        <svg {...common}>
+          <rect x="3" y="4.5" width="18" height="15" rx="3" />
+          <path d="M9.5 4.5v15" />
+        </svg>
+      );
+    case "code":
+      return (
+        <svg {...common}>
+          <path d="m8.5 8-4 4 4 4" />
+          <path d="m15.5 8 4 4-4 4" />
+        </svg>
+      );
+    case "terminal":
+      return (
+        <svg {...common}>
+          <rect x="3" y="4.5" width="18" height="15" rx="3" />
+          <path d="m7.5 10 2.2 2.2-2.2 2.2" />
+          <path d="M12.5 14.4h4" />
+        </svg>
+      );
+    case "clock":
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="8.5" />
+          <path d="M12 7.6V12l3 1.8" />
+        </svg>
+      );
+    case "flock":
+      return (
+        <svg {...common}>
+          <circle cx="7" cy="7.5" r="2.6" />
+          <circle cx="17" cy="7.5" r="2.6" />
+          <circle cx="12" cy="16.5" r="2.6" />
+          <path d="M9.6 7.5h4.8" />
+          <path d="M8.4 9.8 10.8 14" />
+          <path d="M15.6 9.8 13.2 14" />
+        </svg>
+      );
+    case "check2":
+      return (
+        <svg {...common}>
+          <path d="m4.5 12.5 4.5 4.5L19.5 6.5" />
+        </svg>
+      );
+    case "x":
+      return (
+        <svg {...common}>
+          <path d="m6 6 12 12M18 6 6 18" />
         </svg>
       );
   }

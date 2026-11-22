@@ -15,6 +15,7 @@ from pathlib import Path
 
 from ..config.settings import MAX_CONCURRENT_RUNS, MAX_QUEUED_RUNS, RUNS_ROOT
 from ..core.chat import chat_task
+from ..core.flock import flock_task
 from ..core.orchestrator import Orchestrator
 from ..core.state import RunState, restore_run
 from ..models import Specialist
@@ -84,6 +85,25 @@ class Harness:
             kind="chat",
         )
         return self._submit(run, lambda: chat_task(run, specialist, messages, run.depth))
+
+    def start_flock(
+        self, specialists: list[Specialist], messages: list[dict[str, str]], depth: str = "brief"
+    ) -> RunState:
+        """A flock is a chat with a team: one request split, answered in parallel, composed.
+
+        It is a run like any other — the same registry, queue, budget and event stream —
+        so a flock shows up in `/api/runs` and the metrics page exactly as a chat does.
+        """
+        self._room()
+        prompt = next((str(m.get("content", "")) for m in reversed(messages) if m.get("role") == "user"), "").strip()
+        run = RunState(
+            run_id=uuid.uuid4().hex[:12],
+            prompt=prompt[:400],
+            specialists=list(specialists),
+            depth=depth if depth in ("off", "brief", "deep", "ultra") else "brief",
+            kind="flock",
+        )
+        return self._submit(run, lambda: flock_task(run, list(specialists), messages, run.depth))
 
     def _room(self) -> None:
         """Refuse before a workspace is created, so a rejected run leaves nothing behind."""

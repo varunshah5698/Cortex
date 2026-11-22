@@ -27,7 +27,7 @@ from ..core.orchestrator import Orchestrator
 from ..core.state import RunState
 from ..models import Specialist
 from ..modules import budget as pricing
-from ..modules import failures, llm, memory, prompts
+from ..modules import failures, llm, memory, prompts, runner
 from ..modules.roster import RosterStore
 from ..nodes import verify
 from ..tools import web_search
@@ -183,6 +183,14 @@ def unpriced_message(missing: list[dict]) -> str:
     return "\n".join(lines)
 
 
+async def _stop_preview(run: RunState) -> None:
+    """Close the preview a finished case started; an eval never needs it after scoring."""
+    try:
+        await runner.stop(run.run_id)
+    finally:
+        runner.SERVICES.pop(run.run_id, None)
+
+
 async def run_case(
     case: Case,
     live: bool = False,
@@ -200,7 +208,10 @@ async def run_case(
     started = time.perf_counter()
 
     if live:
-        await Orchestrator(run).run_all()
+        try:
+            await Orchestrator(run).run_all()
+        finally:
+            await _stop_preview(run)
         calls = None
     else:
         scripted = Scripted(case)
@@ -234,6 +245,7 @@ async def run_case(
                 original_tools,
             )
             web_search.research = original_research
+            await _stop_preview(run)
         calls = scripted.calls
 
     result = score(case, run)

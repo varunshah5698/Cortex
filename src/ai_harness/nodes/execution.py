@@ -5,7 +5,13 @@ from __future__ import annotations
 import asyncio
 
 from ..agents import executor
-from ..config.settings import AGENT_STEPS, REASONING_CRITIC, REASONING_WORDS
+from ..config.settings import (
+    AGENT_STEPS,
+    CRITIQUE_CLIP_TOKENS,
+    REASONING_CLIP_TOKENS,
+    REASONING_CRITIC,
+    REASONING_WORDS,
+)
 from ..core.state import RunState
 from ..models import Specialist, WorkUnit
 from ..modules import agent_loop, context, goal, intent, llm, memory, progress, prompts, protected, thrash, tool_log
@@ -167,6 +173,74 @@ async def negotiate(run: RunState, units: list[WorkUnit]) -> None:
     await asyncio.gather(*(one(unit) for unit in units))
 
 
+async def _continue_file(
+    run: RunState,
+    agent: Specialist,
+    unit: WorkUnit,
+    files: list[tuple[str, str]],
+    sink: FileSink,
+) -> list[tuple[str, str]]:
+    """Ask for the tail of a file the provider cut at its token ceiling.
+
+    A truncated answer is a prefix: the last block ends mid-token, so the file on disk is
+    not short, it is broken. The old behaviour shipped it and let the verifier report a
+    syntax error, which sent the author into a repair loop over a file it had never
+    finished writing — the model was asked to fix code it never produced.
+
+    This is a continuation, not a rewrite: the model gets the tail of what it already
+    wrote and is asked to finish it. One pass, bounded by the same ceiling, and if it is
+    still truncated the file is left as-is for the checker to judge rather than looping.
+    """
+    if not files:
+        return files
+    path, content = files[-1]
+    if not content.strip():
+        return files
+    # The tail is what the model needs to see; the head is already on disk and already
+    # in its own context. 4,000 characters is roughly the last 100 lines, which is
+    # enough to resume a function, a component or a rule block mid-way.
+    tail = content[-4000:]
+    try:
+        more, usage = await executor.compose(
+            agent,
+            [
+                {
+                    "role": "system",
+                    "content": prompts.CONTINUE_FILE.format(
+                        name=agent.name,
+                        role=agent.role,
+                        file=path,
+                        prompt=run.prompt,
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"The file so far ends with:\n```\n{tail}\n```\n\n"
+                        f"Write only what comes next, continuing from that exact point. "
+                        f"No marker line, no repetition of what is already there."
+                    ),
+                },
+            ],
+            on_think=lambda text: run.emit({"type": "think", "agent": agent.id, "delta": text}),
+            on_code=lambda _path, _delta: None,
+            on_marker=lambda _path: None,
+            default_path=path,
+        )
+    except llm.ProviderError as exc:
+        await run.emit({"type": "error", "agent": agent.id, "message": str(exc)})
+        return files
+    await run.emit(run.track_usage(agent, "continuation", usage))
+    addition = "".join(text for _path, text in more).strip("\n")
+    if not addition:
+        return files
+    # Join at the exact byte the prefix stopped on. A newline here would split a token
+    # that the model was mid-way through, which is the defect this exists to fix.
+    joined = content + addition
+    await sink.write(path, addition)
+    return [*files[:-1], (path, joined)]
+
+
 async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
     agent = next((s for s in run.specialists if s.id == unit.agent), run.specialists[0])
     peers = context.peer_context(
@@ -192,7 +266,7 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
                         contracts=peers,
                         notes=research,
                         lessons=memory.lessons(),
-                        words=REASONING_WORDS * 2 if run.depth == "ultra" else REASONING_WORDS,
+                        words=REASONING_WORDS,
                     ),
                 },
                 {"role": "user", "content": f"Think through {unit.file} now."},
@@ -203,8 +277,12 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
 
         # Pass 1.5 — a different specialist attacks the plan before any code exists.
         # Separation is the point: the model that wrote the plan is its worst judge.
+        # Every depth gets this. It used to be gated to `deep`/`ultra`, so the default
+        # build wrote code against an unreviewed plan and the "depth" control silently
+        # meant "no second opinion at all". `quick` skips research and negotiation, not
+        # the one pass that catches a bad plan before it becomes a bad file.
         critique = ""
-        if run.depth in ("deep", "ultra") and REASONING_CRITIC:
+        if REASONING_CRITIC:
             # Prefer a dedicated reviewer; with none configured, another specialist is
             # still a better critic than the author grading their own plan.
             critic = next((s for s in run.specialists if s.role == "reviewer" and s.id != agent.id), None)
@@ -219,7 +297,7 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
                             prompt=run.prompt,
                             file=unit.file,
                             contracts=peers,
-                            reasoning=context.clip(reasoning, 1100),
+                            reasoning=context.clip(reasoning, REASONING_CLIP_TOKENS),
                         ),
                     },
                     {"role": "user", "content": f"Attack the plan for {unit.file}."},
@@ -245,7 +323,7 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
                                 contracts=peers,
                                 reasoning=context.clip(
                                     f"{reasoning}\n\nFirst reviewer:\n{critique}",
-                                    1800,
+                                    REASONING_CLIP_TOKENS + CRITIQUE_CLIP_TOKENS,
                                 ),
                             ),
                         },
@@ -274,9 +352,8 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
                         prompt=run.prompt,
                         acceptance=intent.contract(getattr(run, "acceptance", None) or []),
                         goal=prompts.GOAL_CONTRACT.format(goal=goal.read(run)),
-                        reasoning=context.clip(reasoning, 1400 if run.depth == "ultra" else 700),
-                        critique=context.clip(critique, 1600 if run.depth == "ultra" else 700)
-                        or "(no reviewer pass for this run)",
+                        reasoning=context.clip(reasoning, REASONING_CLIP_TOKENS),
+                        critique=context.clip(critique, CRITIQUE_CLIP_TOKENS) or "(no reviewer pass for this run)",
                         design=prompts.DESIGN_CONTRACT,
                         contracts=peers,
                         peer_files=context.files_context(run.files, exclude=unit.file),
@@ -293,6 +370,24 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
         )
         await run.emit(run.track_usage(agent, "writing", code_usage))
 
+        # A provider that stopped at its token ceiling left a prefix, not a file. The
+        # verifier would report that as a syntax error and the author would be asked to
+        # repair a file it never finished writing — so say it plainly, and give the
+        # author one continuation pass before the file is treated as written.
+        if code_usage.truncated:
+            await run.emit(
+                {
+                    "type": "message",
+                    "from": "harness",
+                    "kind": "notice",
+                    "text": (
+                        f"{unit.file} hit the provider's output ceiling and was cut mid-file. "
+                        "Asking for the rest before checking it."
+                    ),
+                }
+            )
+            files = await _continue_file(run, agent, unit, files, sink)
+
         shipped = await sink.finish(files)
         if not shipped:
             await run.emit(
@@ -301,43 +396,56 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
             await run.emit({"type": "status", "agent": agent.id, "status": "error"})
             return
 
-        if run.depth == "ultra":
-            # Ultra does not wait for the end-of-run review: the freshly written file is
-            # checked now, and its author gets a bounded tool loop to fix it while the
-            # file is still the thing they are thinking about.
-            # Only a file that does not parse is repaired here. Missing peers, an empty
-            # sibling or a style warning are facts about the whole tree; the end-of-run
-            # review owns them. Repairing them per file made Ultra spin on a stylesheet
-            # that was waiting for the next component.
-            def _unit_syntax() -> dict:
-                report = verify.check(run.files, [unit.file])
-                syntax = [
-                    item for item in report.get("issues", []) if item.get("code") in ("syntax_error", "invalid_json")
-                ]
-                return {**report, "ok": not syntax, "issues": syntax, "errors": len(syntax), "warnings": 0}
+        # Check the file as it lands, at every depth, and let its author fix it while the
+        # file is still the thing they are thinking about. This used to be gated to
+        # `ultra`, so a default run wrote every file, moved on, and only discovered a
+        # broken one at the end-of-run review — by which point the author's context was
+        # gone and the only repair was a blind whole-file rewrite. The check is
+        # deterministic and cheap; the tool loop it opens is bounded by AGENT_STEPS and
+        # the no-progress gate, so this is a sensor, not a second build.
+        #
+        # Only defects that are *local to this file* are repaired here: a file that does
+        # not parse, is empty, is not markup, has unbalanced braces, or leaked a protocol
+        # marker. Missing peers, an undeclared id, an unresolved import and a style
+        # warning are facts about the whole tree — the end-of-run review owns them, and
+        # repairing them per file made a run spin on a stylesheet that was waiting for
+        # the next component.
+        LOCAL_CODES = (
+            "syntax_error",
+            "invalid_json",
+            "empty",
+            "not_html",
+            "unbalanced_braces",
+            "stray_marker",
+        )
 
-            immediate = _unit_syntax()
-            if not immediate.get("ok", True):
-                await run.emit(
-                    {
-                        "type": "message",
-                        "from": "verify",
-                        "text": f"{unit.file} does not parse — repairing before the next file.",
-                        "kind": "review",
-                    }
-                )
+        def _unit_syntax() -> dict:
+            report = verify.check(run.files, [unit.file])
+            local = [item for item in report.get("issues", []) if item.get("code") in LOCAL_CODES]
+            return {**report, "ok": not local, "issues": local, "errors": len(local), "warnings": 0}
 
-                async def _unit_check() -> dict:
-                    return _unit_syntax()
+        immediate = _unit_syntax()
+        if not immediate.get("ok", True):
+            await run.emit(
+                {
+                    "type": "message",
+                    "from": "verify",
+                    "text": f"{unit.file} has a defect local to itself — repairing before the next file.",
+                    "kind": "review",
+                }
+            )
 
-                await agent_loop.repair(
-                    run,
-                    agent,
-                    unit.file,
-                    verify.as_findings(immediate),
-                    _unit_check,
-                    max_steps=AGENT_STEPS,
-                )
+            async def _unit_check() -> dict:
+                return _unit_syntax()
+
+            await agent_loop.repair(
+                run,
+                agent,
+                unit.file,
+                verify.as_findings(immediate),
+                _unit_check,
+                max_steps=AGENT_STEPS,
+            )
 
         lines = sum(run.files[path]["content"].count("\n") + 1 for path in shipped)
         unit.status = "done"

@@ -6,7 +6,7 @@ import asyncio
 import re
 import traceback
 
-from ..config.settings import REPAIR_ROUNDS
+from ..config.settings import AUTO_PREVIEW, REPAIR_ROUNDS
 from ..core.state import RunState, now_iso
 from ..models import Specialist, WorkUnit
 from ..modules import (
@@ -115,6 +115,65 @@ class Orchestrator:
     def persist_metrics(self) -> None:
         self.run.save_metrics()
 
+    async def _auto_preview(self) -> None:
+        """Serve the finished tree so a shipped run is viewable without a second click.
+
+        The pipeline verifies and never compiles, so a run used to end at `done` with
+        `previewed: false` and nothing on a port: the files existed and the person who
+        asked for them had no way to look at them.
+
+        This is not a way around the approval gate. `runner.start` still stops at the
+        first `ask` command (an install, a build, a model-authored server) and reports
+        `needs_approval`; the UI keeps its Approve button for exactly that. What changes is
+        that a tree needing no install — a static page, the common case — is served
+        immediately instead of waiting for a click nobody knew to make.
+        """
+        if not AUTO_PREVIEW:
+            return
+        workspace = getattr(self.run, "workspace", None)
+        if workspace is None or not self.run.files:
+            return
+        # Only a run that actually shipped gets served. A blocked or failed run has a tree
+        # the harness has already refused to vouch for, and putting it on a port would
+        # present a rejected build as viewable.
+        report = self.run.verification or {}
+        if report.get("ok") is not True:
+            return
+        try:
+            from ..modules import runner  # local: runner imports nothing from core
+
+            # No `on_event`: the runner's own progress and error events belong to a serve
+            # the operator asked for, not to the run's transcript. Wiring them in let a
+            # preview that could not start append an `error` to a run that had already
+            # shipped, which read as a failed build.
+            service = await runner.start(
+                self.run.run_id,
+                workspace,
+                approved=False,
+            )
+        except Exception as exc:  # noqa: BLE001 - a preview must never fail a finished run
+            await self.run.emit(
+                {
+                    "type": "message",
+                    "from": "harness",
+                    "kind": "notice",
+                    "text": f"The build is done; the preview could not start ({type(exc).__name__}: {exc}).",
+                }
+            )
+            return
+        await self.run.emit(
+            {
+                "type": "message",
+                "from": "harness",
+                "kind": "notice",
+                "text": (
+                    f"Preview {service.state}: {service.detail}"
+                    if service.state != "needs_approval"
+                    else "Preview needs your approval before it can run this build."
+                ),
+            }
+        )
+
     async def conclude(self, units: list[WorkUnit], reviewer_agent: Specialist) -> None:
         """Review, repair, and the only place a run may be reported `done`.
 
@@ -132,7 +191,7 @@ class Orchestrator:
         # reported to the operator as a shipped run.
         report = self.run.verification or {}
         if report.get("ok") is not True:
-            rounds = REPAIR_ROUNDS * 2 if self.run.depth == "ultra" else REPAIR_ROUNDS
+            rounds = REPAIR_ROUNDS
             report = await review.repair(self.run, reviewer_agent, units, rounds=rounds)
         if report.get("ok") is not True:
             memory.learn(report)
@@ -267,6 +326,11 @@ class Orchestrator:
 
         self.run.done = True
         self.persist_metrics()
+        # Start the preview before the receipt is written, so a run that shipped is
+        # immediately viewable instead of waiting for someone to press Run. A run used to
+        # end at `done` with `previewed: false` and nothing serving the files, which read
+        # as "the harness built it and then hid it".
+        await self._auto_preview()
         # The handoff is written before the receipt, so a run that ends here leaves the
         # next one a starting point even if the receipt write is the thing that fails.
         handoff.write(self.run)
@@ -364,6 +428,14 @@ class Orchestrator:
         try:
             await self.run.emit({"type": "start", "prompt": self.run.prompt, "created": self.run.created})
             event_log(self.run.run_id, "start", prompt=self.run.prompt, depth=self.run.depth)
+            # The standing prompt text is paid on every call, so its size competes with
+            # the model's own output budget. It was measured and tested but never checked
+            # during a run, which made the cap a number in a test rather than a fact about
+            # this run. Say it once, at the start, where an operator will see it.
+            over = prompts.over_always_on_budget()
+            if over:
+                event_log(self.run.run_id, "prompt-budget", detail=over)
+                await self.run.emit({"type": "message", "from": "harness", "kind": "notice", "text": over})
             # Best-effort mirror: a Convex outage must not fail a run that is already
             # executing on disk. See modules/cloud_sync.py.
             await asyncio.to_thread(cloud_sync.start, self.run.run_id, self.run.prompt, self.run.depth)

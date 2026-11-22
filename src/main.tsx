@@ -4,7 +4,7 @@ import Root from "./Root";
 import { installApiClient } from "./lib/api";
 import "./styles.css";
 import "./site.css";
-import "./build.css";
+import "./workspace.css";
 
 installApiClient();
 

@@ -25,6 +25,10 @@ class Usage:
     cost_usd: float = 0.0
     cached: int = 0
     estimated: bool = False
+    # The provider stopped this answer at its output ceiling, so the text is a prefix.
+    # It rides on Usage rather than on a new return value because every caller already
+    # holds the usage, and a truncation nobody can see is the failure this ends.
+    truncated: bool = False
 
     def add(self, other: Usage) -> None:
         self.prompt_tokens += other.prompt_tokens
@@ -35,6 +39,7 @@ class Usage:
         self.cost_usd = round(self.cost_usd + other.cost_usd, 6)
         self.cached += other.cached
         self.estimated = self.estimated or other.estimated
+        self.truncated = self.truncated or other.truncated
 
     def as_dict(self) -> dict:
         return {

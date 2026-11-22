@@ -1,27 +1,35 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { Topbar } from "./components/Topbar";
-import { Composer } from "./components/Composer";
-import { Greeting, SuggestionCards, FooterNote } from "./components/EmptyState";
+import { Composer, type Mode } from "./components/Composer";
+import { Greeting, SuggestionCards } from "./components/EmptyState";
 import { ChatView } from "./components/ChatView";
+import { WorkPanel, type PanelTab } from "./components/WorkPanel";
 import { Icon } from "./components/Icon";
 import {
   buildSeed,
   streamChatHarness,
+  streamFlock,
   type BuildCard,
   type ChatMessage,
   type ChatPhase,
+  type FlockTask,
   type ReasoningDepth,
   type Verdict,
 } from "./lib/chat";
 import { startRun } from "./lib/harness";
-import { hydrateRoster, loadRoster, loadSelected, saveSelected } from "./lib/providers";
+import { hydrateRoster, isConfigured, loadRoster, loadSelected, saveSelected } from "./lib/providers";
 import { titleFor, useThreads } from "./lib/threads";
 import { appendMessage, createThread, recordRunStart } from "./lib/cloud";
 import { navigate } from "./lib/router";
+import { useSession } from "./lib/auth";
+
+/** The context window the composer's meter is measured against. */
+const CONTEXT_WINDOW = 200_000;
 
 export default function App() {
   const { threads, setThreads, patch } = useThreads();
+  const { user } = useSession();
   // Hydrated from the harness on mount; readiness is server truth, not localStorage.
   const [roster, setRoster] = useState(() => loadRoster());
   useEffect(() => {
@@ -37,6 +45,7 @@ export default function App() {
       alive = false;
     };
   }, []);
+
   const [selectedId, setSelectedId] = useState<string>(() => {
     const saved = loadSelected();
     return saved && roster.some((r) => r.id === saved) ? saved : roster[0]?.id ?? "";
@@ -46,13 +55,22 @@ export default function App() {
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
   const [depth, setDepth] = useState<ReasoningDepth>("brief");
+  const [mode, setMode] = useState<Mode>("solo");
+  const [team, setTeam] = useState<string[]>([]);
   const [streaming, setStreaming] = useState<string | null>(null);
   const [thought, setThought] = useState("");
   const [check, setCheck] = useState("");
   const [verdict, setVerdict] = useState<Verdict | "">("");
   const [phase, setPhase] = useState<ChatPhase>("idle");
+  const [tasks, setTasks] = useState<FlockTask[]>([]);
+  const [synthesizing, setSynthesizing] = useState(false);
+  const [spent, setSpent] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(true);
+  const [panelTab, setPanelTab] = useState<PanelTab>("work");
+  const [view, setView] = useState<"chat" | "account">("chat");
+  const [runId, setRunId] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -60,12 +78,25 @@ export default function App() {
   const active = threads.find((t) => t.id === activeId) ?? null;
   const messages = active?.messages ?? [];
   const specialist = roster.find((s) => s.id === selectedId) ?? roster[0];
+  const ready = useMemo(() => roster.filter(isConfigured), [roster]);
+
+  // Default the flock to the specialists that can actually run, so the mode is usable
+  // the moment it is switched on instead of asking for a team first.
+  useEffect(() => {
+    if (team.length) return;
+    const ids = ready.slice(0, 4).map((s) => s.id);
+    if (ids.length >= 2) setTeam(ids);
+  }, [ready, team.length]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         searchRef.current?.focus();
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === "\\") {
+        e.preventDefault();
+        setPanelOpen((v) => !v);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -90,21 +121,36 @@ export default function App() {
     setBusy(false);
     setStreaming(null);
     setPhase("idle");
+    setSynthesizing(false);
   }, []);
+
+  const resetTurn = () => {
+    setStreaming("");
+    setThought("");
+    setCheck("");
+    setVerdict("");
+    setPhase("thinking");
+    setTasks([]);
+    setSynthesizing(false);
+    setSpent(0);
+    setRunId(null);
+  };
 
   const send = useCallback(
     async (raw?: string) => {
       const content = (raw ?? draft).trim();
-      if (!content || busy || !specialist) return;
+      if (!content || busy) return;
+
+      const flockTeam = team
+        .map((id) => roster.find((s) => s.id === id))
+        .filter((s): s is NonNullable<typeof s> => Boolean(s) && isConfigured(s as never));
+      const useFlock = mode === "flock" && flockTeam.length >= 2;
+      if (!useFlock && !specialist) return;
 
       setError(null);
       setDraft("");
       setBusy(true);
-      setStreaming("");
-      setThought("");
-      setCheck("");
-      setVerdict("");
-      setPhase("thinking");
+      resetTurn();
 
       let threadId = activeId;
       let history: ChatMessage[] = [];
@@ -120,8 +166,6 @@ export default function App() {
         setThreads((prev) => [thread, ...prev]);
         setActiveId(threadId);
         history = thread.messages;
-        // Mirror to Convex so the conversation survives this browser. Best-effort: a
-        // failed mirror leaves the local thread intact, which is the source of truth here.
         void (async () => {
           const cloudId = await createThread(thread.title);
           if (cloudId) await appendMessage(cloudId, "user", content);
@@ -142,29 +186,60 @@ export default function App() {
       let thinking = "";
       let selfCheck = "";
       let selfVerdict: Verdict | "" = "";
+      let parts: FlockTask[] = [];
+      let tokens = 0;
 
       try {
-        const answer = await streamChatHarness({
-          specialist,
-          signal: controller.signal,
-          depth,
-          messages: history.map((m) => ({ role: m.role, content: m.content })),
-          onPhase: setPhase,
-          onThink: (delta) => {
-            thinking += delta;
-            setThought(thinking);
-          },
-          onCheck: (text, value) => {
-            selfCheck = text;
-            selfVerdict = value;
-            setCheck(text);
-            setVerdict(value);
-          },
-          onToken: (token) => {
-            acc += token;
-            setStreaming(acc);
-          },
-        });
+        const answer = useFlock
+          ? await streamFlock({
+              team: flockTeam,
+              signal: controller.signal,
+              depth,
+              messages: history.map((m) => ({ role: m.role, content: m.content })),
+              onPhase: setPhase,
+              onTasks: (list) => {
+                parts = list;
+                setTasks(list);
+                setPanelTab("work");
+              },
+              onTaskStatus: (id, status) => {
+                parts = parts.map((p) => (p.id === id ? { ...p, status } : p));
+                setTasks(parts);
+              },
+              onSynth: () => setSynthesizing(true),
+              onToken: (token) => {
+                acc += token;
+                tokens += Math.ceil(token.length / 4);
+                setSpent(tokens);
+                setStreaming(acc);
+              },
+            })
+          : await streamChatHarness({
+              specialist: specialist!,
+              signal: controller.signal,
+              depth,
+              messages: history.map((m) => ({ role: m.role, content: m.content })),
+              onPhase: setPhase,
+              onThink: (delta) => {
+                thinking += delta;
+                tokens += Math.ceil(delta.length / 4);
+                setSpent(tokens);
+                setThought(thinking);
+              },
+              onCheck: (text, value) => {
+                selfCheck = text;
+                selfVerdict = value;
+                setCheck(text);
+                setVerdict(value);
+              },
+              onToken: (token) => {
+                acc += token;
+                tokens += Math.ceil(token.length / 4);
+                setSpent(tokens);
+                setStreaming(acc);
+              },
+            });
+
         patch(threadId, (t) => ({
           ...t,
           messages: [
@@ -172,9 +247,10 @@ export default function App() {
             {
               role: "assistant",
               content: answer || acc,
-              reasoning: thinking.trim(),
-              check: selfCheck,
+              reasoning: thinking.trim() || undefined,
+              check: selfCheck || undefined,
               verdict: selfVerdict || undefined,
+              flock: parts.length ? parts : undefined,
             },
           ],
           updatedAt: Date.now(),
@@ -195,6 +271,7 @@ export default function App() {
                 reasoning: thinking.trim() || undefined,
                 check: selfCheck || undefined,
                 verdict: selfVerdict || undefined,
+                flock: parts.length ? parts : undefined,
               },
             ],
             updatedAt: Date.now(),
@@ -205,12 +282,13 @@ export default function App() {
         setBusy(false);
         setStreaming(null);
         setPhase("idle");
+        setSynthesizing(false);
       }
     },
-    [activeId, busy, depth, draft, patch, setThreads, specialist, threads],
+    [activeId, busy, depth, draft, mode, patch, roster, setThreads, specialist, team, threads],
   );
 
-  // Hand this answer to the build room: the run is seeded with the question, the answer
+  // Hand this answer to a build run: the run is seeded with the question, the answer
   // and the reasoning behind it, and pinned to the message as a card.
   const buildFrom = useCallback(
     async (index: number) => {
@@ -249,11 +327,12 @@ export default function App() {
       }));
 
       try {
-        const runId = await startRun(seed, roster, "deep");
-        patchCard((card) => ({ ...card, runId }));
-        // The harness owns the run; this records it so it is readable after the process
-        // is gone. Fire-and-forget by design — see lib/cloud.ts.
-        void recordRunStart(runId, seed, "deep");
+        const id = await startRun(seed, roster, "deep");
+        patchCard((card) => ({ ...card, runId: id }));
+        setRunId(id);
+        setPanelOpen(true);
+        setPanelTab("files");
+        void recordRunStart(id, seed, "deep");
       } catch (err) {
         const text = err instanceof Error ? err.message : "Cortex did not start the run.";
         patchCard((card) => ({ ...card, status: "error", error: text }));
@@ -281,6 +360,9 @@ export default function App() {
     setActiveId(null);
     setDraft("");
     setError(null);
+    setTasks([]);
+    setRunId(null);
+    setView("chat");
   };
 
   const usePrompt = (text: string) => {
@@ -304,38 +386,80 @@ export default function App() {
   };
 
   const isEmpty = messages.length === 0 && streaming === null;
+  const flockTeam = team
+    .map((id) => roster.find((s) => s.id === id))
+    .filter((s): s is NonNullable<typeof s> => Boolean(s));
+  const panelTeam = mode === "flock" ? flockTeam : specialist ? [specialist] : [];
 
   return (
-    <div className="page">
-      <div className="frame">
-        <Sidebar
-          collapsed={collapsed}
-          onToggle={() => setCollapsed((v) => !v)}
-          threads={threads}
-          activeId={activeId}
-          query={query}
-          onQuery={setQuery}
-          searchRef={searchRef}
-          onNewChat={newChat}
-          onOpenThread={setActiveId}
-          onUsePrompt={usePrompt}
+    <div className={`shell${collapsed ? " is-rail-closed" : ""}${panelOpen ? "" : " is-panel-closed"}`}>
+      <Sidebar
+        collapsed={collapsed}
+        onToggle={() => setCollapsed((v) => !v)}
+        threads={threads}
+        activeId={activeId}
+        query={query}
+        onQuery={setQuery}
+        searchRef={searchRef}
+        onNewChat={newChat}
+        onOpenThread={setActiveId}
+        onUsePrompt={usePrompt}
+        agents={ready.length}
+      />
+
+      <main className="main">
+        <Topbar
+          specialists={roster}
+          selectedId={selectedId}
+          view={view}
+          onView={setView}
+          panelOpen={panelOpen}
+          onPanel={() => setPanelOpen((v) => !v)}
+          onExport={exportChat}
+          onSetup={() => navigate("workshop")}
         />
 
-        <main className="main">
-          <Topbar
-            specialists={roster}
-            selectedId={selectedId}
-            onSelect={pickSpecialist}
-            onExport={exportChat}
-            onSetup={() => navigate("workshop")}
-            onBuild={() => navigate("build")}
-          />
-
+        {view === "account" ? (
+          <div className="account">
+            <section className="account-card">
+              <h2>Specialists</h2>
+              <p>
+                {ready.length} of {roster.length} configured. A flock needs at least two.
+              </p>
+              <ul className="account-list">
+                {roster.map((s) => (
+                  <li key={s.id}>
+                    <b>{s.name}</b>
+                    <em>{s.model || "no model"}</em>
+                    <span className={isConfigured(s) ? "is-ok" : "is-off"}>
+                      {isConfigured(s) ? "ready" : "not configured"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <button className="solid-btn" onClick={() => navigate("workshop")}>
+                Open the workshop
+              </button>
+            </section>
+            <section className="account-card">
+              <h2>Workspace</h2>
+              <p>Runs, files and metrics live beside the chat, not in a separate room.</p>
+              <div className="account-links">
+                <button onClick={() => navigate("files")}>
+                  <Icon name="folder" size={14} /> Files
+                </button>
+                <button onClick={() => navigate("metrics")}>
+                  <Icon name="route" size={14} /> Metrics
+                </button>
+              </div>
+            </section>
+          </div>
+        ) : (
           <div className={`content${isEmpty ? " is-empty" : ""}`}>
             {isEmpty ? (
-              <div className="hero">
-                <Greeting />
-                <div className="hero-stack">
+              <div className="welcome">
+                <Greeting name={user?.name} />
+                <div className="welcome-stack">
                   <Composer
                     value={draft}
                     onChange={setDraft}
@@ -344,6 +468,16 @@ export default function App() {
                     busy={busy}
                     depth={depth}
                     onDepth={setDepth}
+                    mode={mode}
+                    onMode={setMode}
+                    specialists={roster}
+                    selectedId={selectedId}
+                    onSelect={pickSpecialist}
+                    team={team}
+                    onTeam={setTeam}
+                    spent={spent}
+                    contextWindow={CONTEXT_WINDOW}
+                    placeholder="Describe a task"
                   />
                   <SuggestionCards onPick={(text) => send(text)} />
                 </div>
@@ -358,6 +492,9 @@ export default function App() {
                   check={check}
                   verdict={verdict}
                   phase={phase}
+                  tasks={tasks}
+                  team={panelTeam}
+                  synthesizing={synthesizing}
                   onBuild={(index) => void buildFrom(index)}
                   onBuildChange={patchBuildCard}
                 />
@@ -370,24 +507,37 @@ export default function App() {
                     busy={busy}
                     depth={depth}
                     onDepth={setDepth}
+                    mode={mode}
+                    onMode={setMode}
+                    specialists={roster}
+                    selectedId={selectedId}
+                    onSelect={pickSpecialist}
+                    team={team}
+                    onTeam={setTeam}
+                    spent={spent}
+                    contextWindow={CONTEXT_WINDOW}
+                    placeholder="Describe a task"
                   />
                 </div>
               </>
             )}
           </div>
+        )}
+      </main>
 
-          <div className="floating">
-            <button className="round-btn ghost" title="Language">
-              <Icon name="translate" size={17} />
-            </button>
-            <button className="round-btn ghost" title="Help">
-              <Icon name="question" size={17} />
-            </button>
-          </div>
-
-          <FooterNote />
-        </main>
-      </div>
+      <WorkPanel
+        open={panelOpen}
+        onClose={() => setPanelOpen(false)}
+        tab={panelTab}
+        onTab={setPanelTab}
+        tasks={tasks}
+        team={panelTeam}
+        mode={mode}
+        runId={runId}
+        live={busy}
+        spent={spent}
+        answer={streaming ?? messages.filter((m) => m.role === "assistant").at(-1)?.content ?? ""}
+      />
     </div>
   );
 }

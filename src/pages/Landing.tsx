@@ -68,7 +68,7 @@ const mockTeam = [
 ];
 
 export default function Landing({ user = null, onLogout }: { user?: User | null; onLogout?: () => void }) {
-  const go = (route: "login" | "workshop" | "app" | "build") => () => navigate(route);
+  const go = (route: "login" | "workshop" | "app") => () => navigate(route);
 
   return (
     <div className="site">
@@ -84,7 +84,7 @@ export default function Landing({ user = null, onLogout }: { user?: User | null;
             <a href="#harness">Preview</a>
             <a href="#workflow">Workflow</a>
             <a href="#models">Models</a>
-            <button onClick={() => navigate("build")}>Build room</button>
+            <button onClick={() => navigate("app")}>Workspace</button>
             <a href="#faq">FAQ</a>
           </nav>
           <div className="site-actions">
@@ -130,7 +130,7 @@ export default function Landing({ user = null, onLogout }: { user?: User | null;
             Assemble your team
             <Icon name="arrowRight" size={16} />
           </button>
-          <button className="cta-ghost" onClick={go("build")}>
+          <button className="cta-ghost" onClick={go("app")}>
             Watch a team build
           </button>
         </div>
@@ -317,7 +317,7 @@ export default function Landing({ user = null, onLogout }: { user?: User | null;
               <button className="footer-link" onClick={go("workshop")}>
                 Workshop
               </button>
-              <button className="footer-link" onClick={go("build")}>
+              <button className="footer-link" onClick={go("app")}>
                 Build room
               </button>
               {user ? (

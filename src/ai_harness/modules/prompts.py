@@ -101,7 +101,12 @@ Think before writing. Use these stages, each as a heading:
 9. SELF-CHECK — what a reviewer would criticise, answered honestly.
 
 A good plan names evidence, not adjectives. Be concrete: real ids, classes, functions and
-file paths. No code. Stay under {words} words."""
+file paths. No code. Stay under {words} words.
+
+Think hard. This plan is the only place the design gets decided: the code pass writes
+what you decide here, so an option you did not consider becomes a defect nobody catches
+until the browser. If the file is genuinely simple, say so in one line and spend the
+budget on the acceptance checks instead of padding the stages."""
 
 # The plan itself, before any file exists. Ultra asks a second specialist to find what
 # the planner missed, then gives the planner one revision pass with those findings.
@@ -206,11 +211,33 @@ hook, stylesheet or asset), emit it as its own file section using the same marke
 shown below. You may create as many files as the work needs; the harness registers and
 verifies every one.
 
+Finish the file. A file cut off mid-line is worse than a shorter file that ends: if the
+budget is running out, close what you are writing and leave the rest for the next pass
+rather than trailing off. You are not being graded on brevity — a complete, correct file
+of any length beats a terse one that omits a case the request named.
+
 Output format, exactly:
 <<<FILE {file}>>>
 ```language
 ...complete file...
 ```"""
+
+# The continuation pass. A provider that stops at its output ceiling leaves a prefix of a
+# file, and a prefix is not a short file: the last block ends mid-token. Asking the model
+# to "fix" that is asking it to repair code it never wrote, so the harness asks for the
+# rest instead — with the tail it already produced, and nothing else.
+CONTINUE_FILE = """You are {name}, the {role} specialist. You were writing {file} for: "{prompt}"
+
+Your previous answer was cut off by the provider's output limit, partway through the
+file. The file on disk already contains everything you wrote up to that point.
+
+Write ONLY the continuation: the exact text that comes next, starting at the point the
+file stops. Do not repeat any line that is already there, do not restate the file, do not
+add a marker line, and do not wrap the answer in a fence. If the file was cut inside a
+function, a component or a rule block, finish that block and then finish the file.
+
+Output the continuation text and nothing else."""
+
 
 # The goal gate's statement, injected into the code pass. It is the same sentence the run
 # is judged against at the end, so the writer cannot be surprised by the verdict.
@@ -421,6 +448,63 @@ tight: the shortest answer that fully settles it. Never claim to have browsed th
 
 Hard rules: output the answer only. No preamble, no restating the question, no plan, no
 self-check and no reflection on how you answered. Start with the answer itself."""
+
+
+# ---------- flock: one request split across several models ----------
+
+FLOCK_PLAN = """You are the planner on a small team of specialists. Someone wrote one request.
+Your job is to cut it into independent parts, so several specialists can work at the same
+time instead of one model doing everything in sequence.
+
+The request:
+{request}
+
+The team you can assign to:
+{team}
+
+Rules:
+- Between 2 and {max_parts} parts. Fewer, larger parts beat many thin ones.
+- A part must be answerable on its own, without waiting for another part's output.
+- Give each part the role that fits it, taken from the team's roles above.
+- Do not add work the person did not ask for. If the request is genuinely one thing,
+  return two parts that split it by angle (e.g. the decision, then the mechanics).
+
+Reply with one line per part, exactly this shape, no preamble and no other text:
+TASK: <short title> | <role> | <what this specialist should produce, one sentence>"""
+
+FLOCK_PART = """You are {name}, the {role} specialist on a small team. The team split one request
+and you own one part of it. Answer your part only — another specialist is answering the
+other parts at the same time, and a synthesizer will join your work with theirs.
+
+The whole request, for context (do not answer all of it):
+{request}
+
+Your part: {title}
+What you owe the team: {instruction}
+
+Be concrete and specific. Use plain markdown. Do not greet, do not restate the request, do
+not mention the team or the split, and do not summarise what you are about to do — write
+the substance. Stay under {words} words.
+
+Hard rules: output your part only. No preamble, no reflection on how you answered."""
+
+FLOCK_SYNTH = """You are {name}, composing the final answer for the person who asked. Several
+specialists each answered one part of the request in parallel. Your job is one coherent
+answer, not a report on the team.
+
+What the person asked:
+{request}
+
+The parts your team produced:
+{parts}{gap}
+
+Write the answer the person actually wants. Merge the parts where they overlap, drop
+repetition, keep every concrete detail that matters, and resolve disagreements by choosing
+the better-supported one. Never mention that several models worked on this, never name the
+specialists, and never describe the split.
+
+Hard rules: output the answer only. No preamble, no headings like "Synthesis" or "Summary of
+parts", no closing note about how it was produced. Start with the answer itself."""
 
 
 JUDGE = """You are grading one page a team of models built, against the request it was built for.

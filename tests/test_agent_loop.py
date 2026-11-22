@@ -196,7 +196,15 @@ def test_a_path_outside_the_workspace_is_an_observation_not_a_crash(tmp_path: Pa
     assert failed and "invalid path" in failed[0]["error"], failed
 
 
-def test_the_working_set_keeps_only_the_most_recent_files(tmp_path: Path) -> None:
+def test_the_working_set_keeps_only_the_most_recent_files(tmp_path: Path, monkeypatch) -> None:
+    """The LRU evicts the oldest file once the set is full.
+
+    Pinned to a small explicit budget rather than to the shipped default: the default is
+    a tuning value (it was 2, it is 4, and it exists to be changed), while the behaviour —
+    newest wins, oldest goes — is the contract. Asserting on the literal default made a
+    deliberate tuning change look like a regression.
+    """
+    monkeypatch.setattr(agent_loop, "AGENT_ACTIVE_FILES", 2)
     run = FakeRun(tmp_path, {"a.txt": "a\n", "b.txt": "b\n", "c.txt": "c\n"})
     agent = Specialist(id="vega", name="Vega", role="frontend", model="stub")
     state = agent_loop.LoopState(run, agent, "a.txt", "nothing", _checker(run, ""))
@@ -207,6 +215,15 @@ def test_the_working_set_keeps_only_the_most_recent_files(tmp_path: Path) -> Non
     assert list(state.active) == ["b.txt", "c.txt"]
     rendered = state.render()
     assert "FILE c.txt" in rendered and "FILE a.txt" not in rendered
+
+
+def test_the_shipped_working_set_holds_more_than_one_file() -> None:
+    """A repair that needs the markup, the script and the sheet in view at once must fit.
+
+    The default was 2, so a three-file page could not be held together and the model
+    re-read the same files every turn. This pins the floor, not the exact number.
+    """
+    assert agent_loop.AGENT_ACTIVE_FILES >= 3
 
 
 def test_render_stays_within_the_context_budget(tmp_path: Path, monkeypatch) -> None:

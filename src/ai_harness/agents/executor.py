@@ -161,6 +161,12 @@ async def compose(
     ``on_code(path, delta)`` receives each code chunk with the file it belongs to, and
     ``on_marker(path)`` fires when a new section opens. Returns every completed
     section as (path, content).
+
+    The returned usage carries `truncated` when the provider stopped the answer at its
+    token ceiling. A truncated file is not a short file: its last block ends mid-token,
+    and without that flag the caller could not tell it from a model that chose to stop —
+    so it shipped the prefix and the verifier reported a syntax error the author never
+    got a chance to avoid.
     """
     router = CodeStream(default_path)
     stats = llm.StreamStats()
@@ -194,4 +200,5 @@ async def compose(
             await on_marker(path)
             await on_code(path, rescued)
             files = [(path, rescued)]
+    stats.usage.truncated = stats.truncated
     return files, stats.usage

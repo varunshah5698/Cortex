@@ -30,6 +30,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from ai_harness.modules import failures, memory  # noqa: E402
 from ai_harness.utils import logger  # noqa: E402
 
+
+@pytest.fixture(autouse=True)
+def no_auto_preview(monkeypatch):
+    """Never start a real preview server from a test that is not about previews.
+
+    The orchestrator serves a finished static tree automatically. That is right in
+    production and wrong here: every run-through test would leave a `static_server.py`
+    holding a port after pytest exits, and a suite run would accumulate them. The
+    auto-preview tests opt back in explicitly.
+    """
+    from ai_harness.core import orchestrator
+
+    monkeypatch.setattr(orchestrator, "AUTO_PREVIEW", False)
+
+
 # Loopback is how a test talks to its own machine: the preview server, the CDP port a
 # headless Chrome listens on, a local FastAPI app. That is not the internet and blocking
 # it would break the browser and cloud-runner suites for no safety gain.

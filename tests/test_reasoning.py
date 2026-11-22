@@ -109,3 +109,85 @@ def test_a_compose_that_only_thinks_never_becomes_a_file(monkeypatch):
     assert files == []
     assert calls["think"] < 1000
     assert calls["code"] == 0
+
+
+def test_every_depth_critiques_the_plan_not_only_deep_and_ultra(monkeypatch, tmp_path):
+    """Depth must not silently mean "no second opinion".
+
+    The critique was gated to `deep`/`ultra`, so a default or `quick` build wrote code
+    against a plan nobody had attacked. `quick` is allowed to skip research and
+    negotiation; it is not allowed to skip the one pass that catches a bad plan before it
+    becomes a bad file.
+    """
+    monkeypatch.setattr(state_mod, "RUNS_ROOT", tmp_path)
+    seen: list[str] = []
+
+    async def fake_stream(agent, messages, think=True, stats=None):  # noqa: ANN001
+        system = messages[0]["content"]
+        seen.append(system)
+        if "Attack the plan" in system:
+            line = "VERDICT: REVISE\nFINDINGS: 1. name the id."
+            stats.content.append(line)
+            yield ("token", line)
+            return
+        if "Think before writing" in system:
+            line = "1. RESTATE a page."
+            stats.content.append(line)
+            yield ("think", line)
+            return
+        for line in ("<<<FILE app.js>>>\n", 'document.querySelector("#real");\n'):
+            stats.content.append(line)
+            yield ("content", line)
+
+    monkeypatch.setattr(llm, "stream", fake_stream)
+
+    for depth in ("quick", "brief", "deep", "ultra"):
+        seen.clear()
+        author = Specialist(id="a1", name="Ada", role="frontend", model="stub")
+        reviewer = Specialist(id="r1", name="Rex", role="reviewer", model="stub")
+        run = RunState(run_id=f"critique-{depth}", prompt="a page", specialists=[author, reviewer], depth=depth)
+        unit = WorkUnit(id="wu-1", title="Logic", role="frontend", file="app.js", objective="the page", agent="a1")
+        asyncio.run(execution.write_unit(run, unit, []))
+        assert any("Attack the plan" in system for system in seen), f"{depth} skipped the critique pass"
+
+
+def test_the_whole_plan_reaches_the_code_pass(monkeypatch, tmp_path):
+    """A plan the stream allowed to be long must not be cut to a third before it is used.
+
+    `context.clip` takes TOKENS, so the old literal 700 kept 2,800 characters of a plan
+    the reasoning stream allowed to be 4,200. The model deliberated, then wrote against
+    part of its own thinking, on every file.
+    """
+    from ai_harness.config.settings import MAX_REASONING_CHARS
+
+    monkeypatch.setattr(state_mod, "RUNS_ROOT", tmp_path)
+    marker = "BLUEPRINT-MARKER-AT-THE-END"
+    # A plan that fills the stream budget, with a marker at the very end.
+    plan = ("x" * (MAX_REASONING_CHARS - len(marker) - 10)) + marker
+    code_prompt = ""
+
+    async def fake_stream(agent, messages, think=True, stats=None):  # noqa: ANN001
+        nonlocal code_prompt
+        system = messages[0]["content"]
+        if "Think before writing" in system:
+            stats.content.append(plan)
+            yield ("think", plan)
+            return
+        if "Attack the plan" in system:
+            stats.content.append("VERDICT: OK")
+            yield ("token", "VERDICT: OK")
+            return
+        code_prompt = system
+        for line in ("<<<FILE app.js>>>\n", "const a = 1;\n"):
+            stats.content.append(line)
+            yield ("content", line)
+
+    monkeypatch.setattr(llm, "stream", fake_stream)
+
+    author = Specialist(id="a1", name="Ada", role="frontend", model="stub")
+    reviewer = Specialist(id="r1", name="Rex", role="reviewer", model="stub")
+    run = RunState(run_id="clip", prompt="a page", specialists=[author, reviewer], depth="deep")
+    unit = WorkUnit(id="wu-1", title="Logic", role="frontend", file="app.js", objective="the page", agent="a1")
+    asyncio.run(execution.write_unit(run, unit, []))
+
+    assert marker in code_prompt, "the end of the plan was clipped before the code pass saw it"

@@ -1,7 +1,7 @@
-import { startChat, stopRun, subscribe, type HarnessEvent, type Verdict } from "./harness";
+import { startChat, startFlock, stopRun, subscribe, type FlockTask, type HarnessEvent, type Verdict } from "./harness";
 import type { Specialist } from "./providers";
 
-export type { Verdict };
+export type { Verdict, FlockTask };
 
 /** A build run started from a chat answer, pinned to the message it came from. */
 export type BuildCard = {
@@ -23,6 +23,8 @@ export type ChatMessage = {
   /** The direction check the agent ran against its own reasoning. */
   check?: string;
   verdict?: Verdict;
+  /** The parts a flock split this answer into, so the split survives a reload. */
+  flock?: FlockTask[];
   /** Present once this answer has been handed to the build room. */
   build?: BuildCard;
 };
@@ -158,6 +160,112 @@ export async function streamChatHarness({
         case "done":
           // The harness strips a leaked reflection section before finishing; its
           // answer is authoritative, so the saved message matches what it returned.
+          if (event.answer) full = event.answer;
+          finish();
+          break;
+        case "stream_lost":
+          finish(new Error("The Cortex stream dropped before the answer finished."));
+          break;
+        default:
+          break;
+      }
+    };
+
+    source = subscribe(runId, handle);
+  });
+}
+
+type FlockArgs = {
+  team: Specialist[];
+  messages: ChatMessage[];
+  signal: AbortSignal;
+  depth: ReasoningDepth;
+  onPhase?: (phase: ChatPhase) => void;
+  onTasks?: (tasks: FlockTask[]) => void;
+  onTaskStatus?: (id: string, status: FlockTask["status"]) => void;
+  onSynth?: () => void;
+  onToken?: (delta: string) => void;
+};
+
+/**
+ * Stream one flocked answer.
+ *
+ * The parts stream their tokens interleaved — several specialists write at once — so the
+ * page shows progress per task rather than one growing answer. Only the synthesis pass
+ * feeds the answer text, because that is the one thing the person reads.
+ */
+export async function streamFlock({
+  team,
+  messages,
+  signal,
+  depth,
+  onPhase,
+  onTasks,
+  onTaskStatus,
+  onSynth,
+  onToken,
+}: FlockArgs): Promise<string> {
+  const ready = team.filter((s) => s.baseUrl.trim() && s.model.trim());
+  if (ready.length < 2) {
+    throw new Error("A flock needs at least two specialists with a base URL and model.");
+  }
+  if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+
+  const runId = await startFlock(
+    ready,
+    messages.map(({ role, content }) => ({ role, content })),
+    depth,
+  );
+
+  return await new Promise<string>((resolve, reject) => {
+    let full = "";
+    let settled = false;
+    let synthesizing = false;
+    let source: EventSource | null = null;
+
+    const finish = (failure?: Error) => {
+      if (settled) return;
+      settled = true;
+      source?.close();
+      signal.removeEventListener("abort", onAbort);
+      if (failure) reject(failure);
+      else if (!full.trim()) reject(new Error("The flock returned an empty answer."));
+      else resolve(full);
+    };
+
+    function onAbort() {
+      void stopRun(runId);
+      finish(new DOMException("Aborted", "AbortError"));
+    }
+
+    signal.addEventListener("abort", onAbort, { once: true });
+
+    const handle = (event: HarnessEvent) => {
+      switch (event.type) {
+        case "phase":
+          if (event.phase) onPhase?.(event.phase as ChatPhase);
+          break;
+        case "flock":
+          if (event.stage === "plan" && event.tasks) onTasks?.(event.tasks);
+          if (event.stage === "task" && event.id && event.status) {
+            onTaskStatus?.(event.id, event.status as FlockTask["status"]);
+          }
+          if (event.stage === "synth") {
+            synthesizing = true;
+            onSynth?.();
+          }
+          break;
+        case "token":
+          // Only the synthesizer's tokens are the answer. A part's tokens are progress.
+          if (event.delta && synthesizing) {
+            full += event.delta;
+            onToken?.(event.delta);
+          }
+          break;
+        case "error":
+          finish(new Error(event.message));
+          break;
+        case "done":
           if (event.answer) full = event.answer;
           finish();
           break;

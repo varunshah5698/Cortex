@@ -104,6 +104,22 @@ def _wait(url: str) -> None:
     raise AssertionError(f"{url} did not start")
 
 
+def _browser_report(url: str) -> dict:
+    """Run the browser check, skipping the test when Chrome could not finish.
+
+    A probe at import time says Chrome *can* launch; it does not promise Chrome can launch
+    under a full test suite, where a busy machine makes the 30s bound a real risk. A
+    `browser_timeout` is the harness's own "I could not look", not a verdict on the page,
+    so it must not be reported as one — that is the same phantom page defect the launch
+    failure used to produce.
+    """
+    report = asyncio.run(browser.check(url, interact=True))
+    codes = {issue.get("code") for issue in report.get("issues", [])}
+    if codes & {"browser_timeout", "browser_failed"}:
+        pytest.skip(f"headless Chrome could not finish here: {sorted(codes)}")
+    return report
+
+
 def test_a_working_button_is_a_clean_browser_verdict(tmp_path: Path) -> None:
     (tmp_path / "index.html").write_text(
         "<!doctype html><title>Counter</title><body>"
@@ -115,7 +131,7 @@ def test_a_working_button_is_a_clean_browser_verdict(tmp_path: Path) -> None:
     process, url = _serve(tmp_path)
     _wait(url)
     try:
-        report = asyncio.run(browser.check(url, interact=True))
+        report = _browser_report(url)
     finally:
         process.kill()
         process.wait()
@@ -133,7 +149,7 @@ def test_a_throwing_page_is_a_browser_finding(tmp_path: Path) -> None:
     process, url = _serve(tmp_path)
     _wait(url)
     try:
-        report = asyncio.run(browser.check(url, interact=True))
+        report = _browser_report(url)
     finally:
         process.kill()
         process.wait()

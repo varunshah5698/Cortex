@@ -232,12 +232,19 @@ async def _openai(
     # once without, rather than failing the run over an optional field. 501 is Ollama's
     # MLX runner saying "structured output is unavailable"; 400/422 are the usual
     # OpenAI-compatible deployments that never implemented the field.
-    for attempt in range(2 if "response_format" in body else 1):
+    for attempt in range(3):
         async with client().stream("POST", url, headers=headers, json=body) as response:
             if response.status_code >= 400:
                 if attempt == 0 and "response_format" in body and response.status_code in (400, 422, 501):
                     await response.aread()
                     body.pop("response_format", None)
+                    continue
+                # A model whose own ceiling is below ours answers 400 here. Drop the
+                # field and let the provider decide, rather than failing a run over a
+                # number we only set to be generous.
+                if "max_tokens" in body and response.status_code in (400, 422):
+                    await response.aread()
+                    body.pop("max_tokens", None)
                     continue
                 await _raise_for(response, spec)
             async for event in _sse(response):
@@ -425,12 +432,19 @@ async def _ollama(
     # Ollama's MLX runner answers 501 "structured output is unavailable" when asked for
     # `format`. JSON mode is an optimisation, not a requirement, so ask once with it and
     # once without instead of failing a supported local provider over an optional field.
-    for attempt in range(2 if "format" in body else 1):
+    # `num_predict` gets the same treatment for the same reason: a local model whose
+    # context is smaller than the harness's output ceiling would otherwise be asked for
+    # more tokens than it can hold. Dropping the field lets Ollama use its own default.
+    for attempt in range(3):
         async with client().stream("POST", _native_ollama_url(_base(spec)), headers=headers, json=body) as response:
             if response.status_code >= 400:
                 if attempt == 0 and "format" in body and response.status_code in (400, 422, 501):
                     await response.aread()
                     body.pop("format", None)
+                    continue
+                if "num_predict" in body.get("options", {}) and response.status_code in (400, 422):
+                    await response.aread()
+                    body["options"].pop("num_predict", None)
                     continue
                 await _raise_for(response, spec)
             async for raw in response.aiter_lines():

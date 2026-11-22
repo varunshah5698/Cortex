@@ -329,7 +329,7 @@ async def _agent_repair(run: RunState, targets: list[WorkUnit], findings: str) -
                 unit.file,
                 findings,
                 lambda: verify.run(run, "agent-check"),
-                max_steps=AGENT_STEPS * 2 if getattr(run, "depth", "") == "ultra" else AGENT_STEPS,
+                max_steps=AGENT_STEPS,
             )
         except llm.ProviderError as exc:
             await run.emit({"type": "error", "agent": author.id, "message": str(exc)})
@@ -428,7 +428,7 @@ async def revise(
                 unit.file,
                 findings,
                 lambda: verify.run(run, "agent-check"),
-                max_steps=AGENT_STEPS * 2 if getattr(run, "depth", "") == "ultra" else AGENT_STEPS,
+                max_steps=AGENT_STEPS,
             )
         except llm.ProviderError as exc:
             await run.emit({"type": "error", "message": str(exc), "agent": author.id})
@@ -452,13 +452,13 @@ async def revise(
 
     try:
         await run.emit({"type": "status", "agent": author.id, "status": "talking"})
-        asked, ask_usage = await reviewer.question(reviewer_agent, author.name, unit.file, findings[:700])
+        asked, ask_usage = await reviewer.question(reviewer_agent, author.name, unit.file, findings[:2400])
         await run.emit(run.track_usage(reviewer_agent, "review-q", ask_usage))
         await run.emit(
             {"type": "message", "from": reviewer_agent.id, "to": author.id, "text": asked[:300], "kind": "talk"}
         )
 
-        answered, answer_usage = await reviewer.reply(author, reviewer_agent.name, unit.file, findings[:700], asked)
+        answered, answer_usage = await reviewer.reply(author, reviewer_agent.name, unit.file, findings[:2400], asked)
         await run.emit(run.track_usage(author, "reply", answer_usage))
         await run.emit(
             {"type": "message", "from": author.id, "to": reviewer_agent.id, "text": answered[:300], "kind": "talk"}
@@ -468,7 +468,7 @@ async def revise(
         deliberation, plan_usage = await reviewer.plan_fix(
             author,
             unit.file,
-            findings[:900],
+            findings[:2400],
             answered,
             on_think=lambda t: run.emit({"type": "think", "agent": author.id, "delta": t}),
         )
@@ -491,7 +491,7 @@ async def revise(
                         acceptance=intent.contract(getattr(run, "acceptance", None) or []),
                         goal=prompts.GOAL_CONTRACT.format(goal=goal.read(run)),
                         reasoning=deliberation or answered,
-                        critique=findings[:700],
+                        critique=findings[:2400],
                         design=prompts.DESIGN_CONTRACT,
                         contracts=run.contracts.get(author.id, ""),
                         peer_files=context.files_context(run.files, exclude=unit.file),
@@ -503,7 +503,7 @@ async def revise(
                     "role": "user",
                     "content": (
                         f"Current {unit.file} — keep every id, class, selector and event handler that already works:\n"
-                        f"```\n{current[:7000]}\n```\n\n"
+                        f"```\n{current[:24000]}\n```\n\n"
                         f"Rewrite {unit.file} with the fixes. Reply with the whole file."
                         if current
                         else f"Rewrite {unit.file} with the fixes. Reply with the whole file."

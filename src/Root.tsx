@@ -1,5 +1,4 @@
 import App from "./App";
-import Build from "./pages/Build";
 import Files from "./pages/Files";
 import Landing from "./pages/Landing";
 import Login from "./pages/Login";
@@ -8,7 +7,7 @@ import Workshop from "./pages/Workshop";
 import { logout, useSession } from "./lib/auth";
 import { navigate, useRoute } from "./lib/router";
 
-const guarded = new Set(["workshop", "app", "build", "files", "metrics"]);
+const guarded = new Set(["workshop", "app", "files", "metrics"]);
 
 export default function Root() {
   const route = useRoute();
@@ -34,8 +33,6 @@ export default function Root() {
       return <Workshop />;
     case "app":
       return <App />;
-    case "build":
-      return <Build />;
     case "files":
       return <Files />;
     case "metrics":

@@ -18,15 +18,18 @@ const cards = [
   },
 ];
 
-export function Greeting() {
+export function Greeting({ name }: { name?: string }) {
+  // The first word of the account's name, or nothing: "Hello, " with a trailing comma
+  // and no name reads like a template that failed, which is what it would be.
+  const who = (name ?? "").trim().split(/\s+/)[0];
   return (
     <div className="greeting">
       <div className="orb">
         <span className="orb-core" />
         <span className="orb-shine" />
       </div>
-      <p className="hello">Hello, Jackson</p>
-      <h1>How can I assist you today?</h1>
+      <p className="hello">{who ? `Hello, ${who}` : "Welcome back"}</p>
+      <h1>What should we build?</h1>
     </div>
   );
 }

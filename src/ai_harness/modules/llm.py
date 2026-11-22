@@ -234,6 +234,7 @@ async def _settle(spec: Specialist, stats: StreamStats, started: float, budget, 
     stats.usage.cost_usd = pricing.estimate(spec, stats.usage.prompt_tokens, stats.usage.completion_tokens)
     if budget is not None:
         budget.spend(stats.usage.prompt_tokens + stats.usage.completion_tokens, stats.usage.cost_usd)
+    stats.usage.truncated = stats.truncated
     if stats.truncated:
         # Say it once, where the spend is recorded. A truncated generation that nobody
         # mentions is the failure mode this flag exists to end: the file looks written.

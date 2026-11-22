@@ -100,11 +100,20 @@ PORT = _int("HARNESS_PORT", 8000)
 MAX_UNITS = max(0, _int("HARNESS_MAX_UNITS", 0))
 MAX_RESEARCH_QUERIES = _int("HARNESS_MAX_RESEARCH_QUERIES", 3)
 MAX_RESEARCH_PAGES = _int("HARNESS_MAX_RESEARCH_PAGES", 2)
-REASONING_WORDS = _int("HARNESS_REASONING_WORDS", 700)
-# A small model can ignore the word budget and stream forever, producing no file while
-# the room looks alive. The cap is a hard stop on the visible reasoning stream; the
-# compose pass then gets its turn.
+REASONING_WORDS = _int("HARNESS_REASONING_WORDS", 1600)
+# A model can ignore the word budget and stream forever, producing no file while the room
+# looks alive, so the visible reasoning stream still has a hard stop. It is now sized to
+# the word budget instead of to a small model's attention span: 700 words across nine
+# deliberation stages is about 78 words a stage, which is a checklist, not thinking. The
+# compose pass still gets its turn when the cap is hit.
 MAX_REASONING_CHARS = max(1000, _int("HARNESS_MAX_REASONING_CHARS", REASONING_WORDS * 6))
+# How much of that plan reaches the code pass. `context.clip` takes TOKENS, so the old
+# literal 700 kept 2,800 characters of a plan the stream allowed to be 4,200 — the model
+# deliberated, then wrote code against a third of its own thinking, on every file. These
+# are sized to keep the whole plan and the whole critique, which is the point of paying
+# for them; a run that wants a tighter context budget can lower them.
+REASONING_CLIP_TOKENS = max(200, _int("HARNESS_REASONING_CLIP_TOKENS", MAX_REASONING_CHARS // 4))
+CRITIQUE_CLIP_TOKENS = max(200, _int("HARNESS_CRITIQUE_CLIP_TOKENS", MAX_REASONING_CHARS // 4))
 # The reviewer streams its reading of the tree, and that stream was unbounded: a local
 # model that keeps thinking produced 7,000+ deltas and held one review call open for
 # three quarters of an hour while the room looked alive. The reasoning pass already has
@@ -132,8 +141,25 @@ PLAN_SECONDS = max(0.0, _float("HARNESS_PLAN_SECONDS", 120.0))
 # file and catches broken wiring on paper; deep runs keep it on by default.
 REASONING_CRITIC = _bool("HARNESS_REASONING_CRITIC", True)
 HTTP_TIMEOUT_READ = _float("HARNESS_HTTP_TIMEOUT_READ", 300.0)
-MAX_OUTPUT_TOKENS = _int("HARNESS_MAX_OUTPUT_TOKENS", 8192)
-MAX_FILE_LINES = _int("HARNESS_MAX_FILE_LINES", 900)
+# The output ceiling on every provider call. This was 8192, which is the single hardest
+# bound in the harness: at roughly 12 tokens a line it makes a 900-line file physically
+# unwritable in one answer, so a model that planned a complete file was cut off mid-file
+# and the truncation looked like a bad model rather than a bad budget. A modern model
+# answers 32k without strain, and an answer may carry several files behind markers, so
+# the default is now sized for a real multi-file answer. A provider that rejects the
+# value drops the field and uses its own ceiling (see `adapters._openai` / `_ollama`)
+# rather than failing the call.
+MAX_OUTPUT_TOKENS = _int("HARNESS_MAX_OUTPUT_TOKENS", 32768)
+# The largest single file the harness will accept. Kept in step with the output ceiling
+# so a file that fits in one answer also fits the tree; the byte quota in
+# `agent_loop._write` remains the hard stop.
+MAX_FILE_LINES = _int("HARNESS_MAX_FILE_LINES", 2000)
+# How much of the peers' actual work a writer sees. This is the context that keeps ids,
+# classes and imports consistent across files, and it was hardcoded to 4 files at 320
+# tokens each — about a fifth of a real page. 0 files means "no cap": every written peer
+# file is included, each clipped to PEER_TOKENS.
+PEER_FILES = max(0, _int("HARNESS_PEER_FILES", 0))
+PEER_TOKENS = max(120, _int("HARNESS_PEER_TOKENS", 1600))
 
 # Wall-clock and concurrency control. A run is bounded in time as well as in money.
 # Local models make one call at a time and a multi-file build is a dozen calls; an hour
@@ -149,20 +175,33 @@ MAX_RUN_BYTES = max(MAX_FILE_BYTES, _int("HARNESS_MAX_RUN_BYTES", 4 * 1024 * 102
 MAX_REVISION_ROUNDS = max(0, _int("HARNESS_MAX_REVISION_ROUNDS", 2))
 
 # A run may not finish on a failing check: after the review's own revision pass the
-# orchestrator allows this many repair rounds before it refuses to emit `done`.
-REPAIR_ROUNDS = max(0, _int("HARNESS_REPAIR_ROUNDS", 1))
+# orchestrator allows this many repair rounds before it refuses to emit `done`. One
+# round meant a single attempt at the facts; a tree with two independent defects needs
+# one round per defect, and the loop is already bounded by the budget and the clock.
+REPAIR_ROUNDS = max(0, _int("HARNESS_REPAIR_ROUNDS", 3))
 
 # The repair agent loop: a specialist fixes a failing check with tools (read, edit,
 # check) instead of rewriting the whole file blind. It is on by default because a
 # targeted edit is cheaper and safer than a second full generation; the old rewrite is
 # still the fallback when a model cannot produce a usable tool call.
 AGENT_LOOP = _bool("HARNESS_AGENT_LOOP", True)
-AGENT_STEPS = max(1, _int("HARNESS_AGENT_STEPS", 8))
+# The step budget. Eight was sized for "one broken name" repairs; a real repair is
+# read, find the second occurrence, edit, check, fix the follow-on, check again, done,
+# which is eight before anything goes wrong. A loop that runs out of steps mid-fix
+# hands a half-repaired file to the whole-file rewrite, which is how the parts that
+# already worked get lost. The bound still exists — `thrash` and the no-progress gate
+# stop a loop that is spinning — it is just no longer the thing that stops a loop that
+# is working.
+AGENT_STEPS = max(1, _int("HARNESS_AGENT_STEPS", 24))
 # The prompt is rebuilt each turn from a flat state block, not from a growing chat, so
-# this is the whole working set: ledger + active files + observations.
-AGENT_CONTEXT_CHARS = max(4000, _int("HARNESS_AGENT_CONTEXT_CHARS", 12000))
-AGENT_OBSERVATION_CHARS = max(500, _int("HARNESS_AGENT_OBSERVATION_CHARS", 4000))
-AGENT_ACTIVE_FILES = max(1, _int("HARNESS_AGENT_ACTIVE_FILES", 2))
+# this is the whole working set: ledger + active files + observations. 12k characters
+# held roughly two files; a repair that needs the markup, the script and the stylesheet
+# in view at once could not, and re-read them every turn instead.
+AGENT_CONTEXT_CHARS = max(4000, _int("HARNESS_AGENT_CONTEXT_CHARS", 32000))
+AGENT_OBSERVATION_CHARS = max(500, _int("HARNESS_AGENT_OBSERVATION_CHARS", 8000))
+# How many files stay resident in the working set. The LRU still evicts; it just no
+# longer evicts the file the model is about to edit.
+AGENT_ACTIVE_FILES = max(1, _int("HARNESS_AGENT_ACTIVE_FILES", 4))
 # OpenAI-compatible providers can be driven by native tool calls instead of the text
 # protocol. The loop keeps the text parser as the fallback and disables this for the
 # rest of the run when a provider answers 4xx to `tools`.
@@ -189,7 +228,7 @@ ROULETTE_SEED = _int("HARNESS_ROULETTE_SEED", 0) or None
 # A subagent gets its own message list and a bounded number of steps. The bound is
 # smaller than the repair loop's: a delegate that needs ten tool calls to answer one
 # question is usually reading the wrong thing, and the parent is paying for every step.
-SUBAGENT_STEPS = max(1, _int("HARNESS_SUBAGENT_STEPS", 6))
+SUBAGENT_STEPS = max(1, _int("HARNESS_SUBAGENT_STEPS", 12))
 
 # The acceptance layer: the request's named capabilities become a checklist the harness
 # checks the tree against. This is the only sensor that asks whether the build is the
@@ -374,6 +413,13 @@ KEYS_FILE = Path(os.getenv("HARNESS_KEYS_FILE", ROOT / ".harness-keys.json"))
 # Turning this off removes the human checkpoint; it exists for unattended CI, not for
 # normal use.
 REQUIRE_APPROVAL = _bool("HARNESS_REQUIRE_APPROVAL", True)
+
+# A finished run starts its preview by itself, so the person who asked for the build can
+# look at it without knowing to press Run. This does not bypass the approval gate above:
+# `runner.start` still stops at the first `ask` command and reports `needs_approval`. It
+# only removes the second click for a tree that needs no install, which is the common
+# static case. Off only for an operator who wants every serve to be manual.
+AUTO_PREVIEW = _bool("HARNESS_AUTO_PREVIEW", True)
 
 TERMINAL_ENABLED = _bool("HARNESS_ALLOW_TERMINAL", False)
 TERMINAL_TIMEOUT = _float("HARNESS_TERMINAL_TIMEOUT", 10.0)

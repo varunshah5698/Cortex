@@ -1,13 +1,12 @@
 import { useState, useEffect } from "react";
 
-export type Route = "landing" | "login" | "workshop" | "app" | "build" | "files" | "metrics";
+export type Route = "landing" | "login" | "workshop" | "app" | "files" | "metrics";
 
 const paths: Record<Route, string> = {
   landing: "/",
   login: "/login",
   workshop: "/setup",
   app: "/app",
-  build: "/build",
   files: "/files",
   metrics: "/metrics",
 };

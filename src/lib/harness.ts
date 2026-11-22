@@ -83,6 +83,17 @@ export type ChatTurn = { role: "user" | "assistant" | "system"; content: string 
 /** The verdict of a chat's self-check on its own direction. */
 export type Verdict = "on-track" | "adjust";
 
+/** One slice of a flocked request: what it is, who owns it, how it went. */
+export type FlockTask = {
+  id: string;
+  title: string;
+  role: string;
+  agent: string;
+  agentName: string;
+  status: "pending" | "running" | "done" | "error";
+  chars: number;
+};
+
 export type HarnessEvent =
   | { type: "start"; prompt: string; kind?: string; created?: string; resumed?: boolean }
   | { type: "queue"; position: number; concurrency: number; message?: string }
@@ -131,6 +142,15 @@ export type HarnessEvent =
   | { type: "message"; from: string; to?: string; text: string; kind: string }
   | { type: "think"; agent: string; delta: string }
   | { type: "check"; verdict: Verdict; text: string }
+  | {
+      type: "flock";
+      stage: "plan" | "task" | "synth";
+      tasks?: FlockTask[];
+      id?: string;
+      status?: string;
+      agent?: string;
+    }
+  | { type: "compact"; before?: number; after?: number; message?: string }
   | { type: "token"; delta: string; agent?: string }
   | {
       type: "tool";
@@ -249,8 +269,34 @@ export async function startChat(
   return ((await res.json()) as { run_id: string }).run_id;
 }
 
-export async function stopRun(id: string): Promise<void> {
-  const res = await fetch(`${API}/api/run/${id}/stop`, { method: "POST" });
+/** Start a flock: the request is split across `team` and composed back into one answer. */
+export async function startFlock(team: Specialist[], messages: ChatTurn[], depth: string): Promise<string> {
+  await ensureRoster(team);
+
+  let res: Response;
+  try {
+    res = await fetch(`${API}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ specialist_ids: team.map((s) => s.id), messages, depth }),
+    });
+  } catch {
+    throw new Error(offline);
+  }
+  if (!res.ok) {
+    const raw = await res.text().catch(() => "");
+    let detail = raw.slice(0, 250);
+    try {
+      detail = (JSON.parse(raw) as { detail?: string }).detail ?? detail;
+    } catch {
+      /* keep the raw body */
+    }
+    throw new Error(detail || `Cortex responded ${res.status}`);
+  }
+  return ((await res.json()) as { run_id: string }).run_id;
+}
+
+export async function stopRun(id: string): Promise<void> {  const res = await fetch(`${API}/api/run/${id}/stop`, { method: "POST" });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { detail?: string };
     throw new Error(body.detail || `The harness answered ${res.status}`);

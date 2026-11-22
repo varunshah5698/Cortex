@@ -367,6 +367,10 @@ class ChatRequest(BaseModel):
     # Reasoning budget: off answers directly, brief reasons then answers, deep also
     # checks its own direction. Each step is a model call.
     depth: str = "brief"
+    # Flock: split this request across this many specialists and compose one answer.
+    # Empty means an ordinary single-specialist chat. A list of one is still a chat —
+    # `run_flock` says so rather than pretending to fan out.
+    specialist_ids: list[str] = Field(default_factory=list)
 
 
 class SignupIn(BaseModel):
@@ -611,7 +615,23 @@ async def chat(payload: ChatRequest) -> dict:
 
     Same registry, same event bus, same ledger as a build — so the chat page and the
     build room read one Python harness, and chat calls land in the metrics.
+
+    With `specialist_ids` this is a flock: the request is split across that team and
+    composed back into one answer. The roster is resolved here, by id, so the browser
+    still never sends a key.
     """
+    messages = [item.model_dump() for item in payload.messages]
+    if not any(m["role"] == "user" and m["content"].strip() for m in messages):
+        raise HTTPException(400, "Nothing to answer — send a message first")
+
+    if payload.specialist_ids:
+        team = _team(payload.specialist_ids, [])
+        try:
+            run = harness.start_flock(team, messages, payload.depth)
+        except HarnessBusy as exc:
+            raise HTTPException(429, str(exc), headers={"Retry-After": "5"}) from exc
+        return {"run_id": run.run_id, "kind": "flock"}
+
     if payload.specialist_id:
         stored = ROSTER.get(payload.specialist_id)
         if stored is None:
@@ -623,10 +643,6 @@ async def chat(payload: ChatRequest) -> dict:
         raise HTTPException(400, "send specialist_id or a specialist")
     if not spec.model or not spec.baseUrl:
         raise HTTPException(400, f"{spec.name} has no model configured")
-
-    messages = [item.model_dump() for item in payload.messages]
-    if not any(m["role"] == "user" and m["content"].strip() for m in messages):
-        raise HTTPException(400, "Nothing to answer — send a message first")
 
     try:
         run = harness.start_chat(spec, messages, payload.depth)

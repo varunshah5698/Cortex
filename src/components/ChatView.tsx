@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { RichText } from "../lib/markdown";
-import type { BuildCard, ChatMessage, ChatPhase, Verdict } from "../lib/chat";
+import type { BuildCard, ChatMessage, ChatPhase, FlockTask, Verdict } from "../lib/chat";
 import { BuildCardView } from "./BuildCardView";
+import { Icon } from "./Icon";
+import { roleColor, type Role, type Specialist } from "../lib/providers";
 
 type Props = {
   messages: ChatMessage[];
@@ -11,6 +13,10 @@ type Props = {
   check: string;
   verdict: Verdict | "";
   phase: ChatPhase;
+  /** The flock's parts for the turn in flight, if this is a flock turn. */
+  tasks: FlockTask[];
+  team: Specialist[];
+  synthesizing: boolean;
   onBuild?: (index: number) => void;
   onBuildChange?: (index: number, patch: Partial<BuildCard>) => void;
 };
@@ -22,7 +28,7 @@ const phaseLabel: Record<ChatPhase, string> = {
   answering: "writing the answer",
 };
 
-/** The agent's thinking, as plain text — the same card the build room shows. */
+/** The agent's thinking, as plain text. */
 export function Reasoning({
   thought,
   check,
@@ -40,7 +46,6 @@ export function Reasoning({
   const bodyRef = useRef<HTMLDivElement>(null);
   const adjusted = verdict === "adjust";
 
-  // Follow the newest thought while the agent is still deliberating.
   useEffect(() => {
     if (!live || !open) return;
     const el = bodyRef.current;
@@ -60,7 +65,6 @@ export function Reasoning({
 
       {open && (
         <div className="reason-body" ref={bodyRef}>
-          {/* runs recorded before reasoning was plain text keep their markers */}
           {thought && (
             <p className="reason-thought">{thought.replace(/^#{1,6}\s+/gm, "").replace(/\*\*/g, "")}</p>
           )}
@@ -85,6 +89,45 @@ export function Reasoning({
   );
 }
 
+/** The flock's parts, shown inline so the split is visible while it happens. */
+function FlockBoard({ tasks, team }: { tasks: FlockTask[]; team: Specialist[] }) {
+  const owner = (id: string) => team.find((s) => s.id === id);
+  const done = tasks.filter((t) => t.status === "done").length;
+
+  return (
+    <div className="flockboard">
+      <div className="flockboard-head">
+        <Icon name="flock" size={13} />
+        <b>The flock</b>
+        <em>
+          {done}/{tasks.length} parts
+        </em>
+      </div>
+      <ul>
+        {tasks.map((task) => {
+          const spec = owner(task.agent);
+          return (
+            <li key={task.id} className={`is-${task.status}`}>
+              <span className="flock-dot" style={{ background: roleColor((spec?.role ?? task.role) as Role) }} />
+              <span className="flock-title">{task.title}</span>
+              <span className="flock-who">{task.agentName || spec?.name || "—"}</span>
+              <span className="flock-state">
+                {task.status === "done" ? (
+                  <Icon name="check2" size={11} />
+                ) : task.status === "error" ? (
+                  <Icon name="x" size={11} />
+                ) : (
+                  <i className="flock-pulse" />
+                )}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 export function ChatView({
   messages,
   streaming,
@@ -93,6 +136,9 @@ export function ChatView({
   check,
   verdict,
   phase,
+  tasks,
+  team,
+  synthesizing,
   onBuild,
   onBuildChange,
 }: Props) {
@@ -100,7 +146,7 @@ export function ChatView({
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages.length, streaming, thought, check]);
+  }, [messages.length, streaming, thought, check, tasks.length]);
 
   return (
     <div className="chat">
@@ -114,13 +160,9 @@ export function ChatView({
             <div className="msg-ai" key={i}>
               <span className="ai-dot" />
               <div className="msg-body">
+                {m.flock && m.flock.length > 0 && <FlockBoard tasks={m.flock} team={team} />}
                 {m.reasoning && (
-                  <Reasoning
-                    thought={m.reasoning}
-                    check={m.check ?? ""}
-                    verdict={m.verdict ?? ""}
-                    live={false}
-                  />
+                  <Reasoning thought={m.reasoning} check={m.check ?? ""} verdict={m.verdict ?? ""} live={false} />
                 )}
                 <RichText text={m.content} />
                 {m.build ? (
@@ -128,6 +170,7 @@ export function ChatView({
                 ) : (
                   <div className="msg-actions">
                     <button className="build-this" type="button" onClick={() => onBuild?.(i)}>
+                      <Icon name="layers" size={13} />
                       Build this
                     </button>
                   </div>
@@ -141,9 +184,15 @@ export function ChatView({
           <div className="msg-ai">
             <span className="ai-dot is-live" />
             <div className="msg-body">
+              {tasks.length > 0 && <FlockBoard tasks={tasks} team={team} />}
               <Reasoning thought={thought} check={check} verdict={verdict} phase={phase} live />
               {streaming ? (
                 <RichText text={streaming} />
+              ) : synthesizing ? (
+                <p className="synth-note">
+                  <i className="flock-pulse" />
+                  Composing one answer from the parts…
+                </p>
               ) : phase === "answering" ? (
                 <span className="typing">
                   <i />

@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import type { BuildCard } from "../lib/chat";
 import { fmtNumber, previewUrl, subscribe } from "../lib/harness";
-import { navigate } from "../lib/router";
 
 const statusLabel: Record<BuildCard["status"], string> = {
   running: "building",
@@ -71,11 +70,6 @@ export function BuildCardView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [card.runId, card.status]);
 
-  const open = () => {
-    localStorage.setItem("cortex:lastRun", card.runId);
-    navigate("build");
-  };
-
   return (
     <div className={`bcard is-${shown.status}`}>
       <div className="bcard-head">
@@ -100,11 +94,11 @@ export function BuildCardView({
       {shown.error && <p className="bcard-error">{shown.error}</p>}
 
       <div className="bcard-actions">
-        <button type="button" onClick={open} disabled={!card.runId}>
-          Open build room
-        </button>
         <a href={previewUrl(card.runId)} target="_blank" rel="noreferrer">
-          Preview
+          Open the preview
+        </a>
+        <a href={`#/files`} rel="noreferrer">
+          Files
         </a>
       </div>
     </div>

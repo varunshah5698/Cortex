@@ -15,13 +15,14 @@ type Props = {
   onNewChat: () => void;
   onOpenThread: (id: string) => void;
   onUsePrompt: (text: string) => void;
+  /** How many specialists are configured, for the footer counter. */
+  agents: number;
 };
 
 const nav = [
-  { icon: "globe" as const, label: "Explore" },
-  { icon: "library" as const, label: "Library" },
-  { icon: "folder" as const, label: "Files" },
-  { icon: "history" as const, label: "History" },
+  { icon: "plus" as const, label: "New chat", action: "new" },
+  { icon: "layers" as const, label: "Artifacts", action: "artifacts" },
+  { icon: "clock" as const, label: "Routines", action: "routines" },
 ];
 
 export function Sidebar({
@@ -35,32 +36,46 @@ export function Sidebar({
   onNewChat,
   onOpenThread,
   onUsePrompt,
+  agents,
 }: Props) {
   const { user, setUser } = useSession();
   const q = query.trim().toLowerCase();
   const matches = (s: string) => !q || s.toLowerCase().includes(q);
+  const visible = threads.filter((t) => matches(t.title));
 
   return (
     <aside className={`sidebar${collapsed ? " is-collapsed" : ""}`}>
       <div className="sidebar-head">
         <div className="brand">
           <span className="brand-mark">
-            <Icon name="logo" size={16} />
+            <Icon name="logo" size={15} />
           </span>
           <span className="brand-name">Cortex</span>
         </div>
         <button className="icon-btn" onClick={onToggle} title={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
-          <Icon name={collapsed ? "expand" : "collapse"} size={17} />
+          <Icon name={collapsed ? "expand" : "collapse"} size={16} />
         </button>
       </div>
 
-      <button className="new-chat" onClick={onNewChat}>
-        <Icon name="plus" size={16} />
-        <span>New chat</span>
-      </button>
+      <nav className="nav">
+        {nav.map((item) => (
+          <button
+            className="nav-row"
+            key={item.label}
+            onClick={() => {
+              if (item.action === "new") onNewChat();
+              if (item.action === "artifacts") navigate("files");
+              if (item.action === "routines") navigate("metrics");
+            }}
+          >
+            <Icon name={item.icon} size={16} />
+            <span>{item.label}</span>
+          </button>
+        ))}
+      </nav>
 
       <label className="search">
-        <Icon name="search" size={14} />
+        <Icon name="search" size={13} />
         <input
           ref={searchRef}
           value={query}
@@ -73,31 +88,23 @@ export function Sidebar({
         </span>
       </label>
 
-      <nav className="nav">
-        {nav.map((item) => (
-          <button className="nav-row" key={item.label}>
-            <Icon name={item.icon} size={17} />
-            <span>{item.label}</span>
-          </button>
-        ))}
-      </nav>
-
       <div className="sidebar-body">
-        {threads.filter((t) => matches(t.title)).length > 0 && (
+        {visible.length > 0 && (
           <section className="group">
-            <h3>Today</h3>
-            {threads
-              .filter((t) => matches(t.title))
-              .map((t) => (
-                <button
-                  key={t.id}
-                  className={`thread${t.id === activeId ? " is-active" : ""}`}
-                  onClick={() => onOpenThread(t.id)}
-                  title={t.title}
-                >
-                  {t.title}
-                </button>
-              ))}
+            <h3>
+              <span className="group-mark" />
+              Chats
+            </h3>
+            {visible.map((t) => (
+              <button
+                key={t.id}
+                className={`thread${t.id === activeId ? " is-active" : ""}`}
+                onClick={() => onOpenThread(t.id)}
+                title={t.title}
+              >
+                <span className="thread-title">{t.title}</span>
+              </button>
+            ))}
           </section>
         )}
 
@@ -109,7 +116,7 @@ export function Sidebar({
               <h3>{group.group}</h3>
               {items.map((item) => (
                 <button key={item} className="thread" onClick={() => onUsePrompt(item)} title={item}>
-                  {item}
+                  <span className="thread-title">{item}</span>
                 </button>
               ))}
             </section>
@@ -117,24 +124,38 @@ export function Sidebar({
         })}
       </div>
 
-      <div className="user-card">
-        <img className="avatar" src="/avatar.jpg" alt="" />
-        <div className="user-meta">
-          <span className="user-name">{user?.name ?? "Guest"}</span>
-          <span className="user-mail">{user?.email ?? "Not signed in"}</span>
-        </div>
-        <button
-          className="icon-btn logout"
-          title="Sign out"
-          onClick={() => {
-            void logout().finally(() => {
-              setUser(null);
-              navigate("login");
-            });
-          }}
-        >
-          <Icon name="logout" size={17} />
+      <div className="sidebar-foot">
+        <button className="agents-row" onClick={() => navigate("workshop")} title="Configure the specialists">
+          <span className="agents-dots">
+            <i />
+            <i />
+            <i />
+          </span>
+          <span>
+            {agents} agent{agents === 1 ? "" : "s"}
+          </span>
+          <Icon name="arrowRight" size={13} />
         </button>
+
+        <div className="user-card">
+          <img className="avatar" src="/avatar.jpg" alt="" />
+          <div className="user-meta">
+            <span className="user-name">{user?.name ?? "Guest"}</span>
+            <span className="user-mail">{user?.email ?? "Not signed in"}</span>
+          </div>
+          <button
+            className="icon-btn logout"
+            title="Sign out"
+            onClick={() => {
+              void logout().finally(() => {
+                setUser(null);
+                navigate("login");
+              });
+            }}
+          >
+            <Icon name="logout" size={16} />
+          </button>
+        </div>
       </div>
     </aside>
   );

@@ -42,7 +42,7 @@ export default function Metrics() {
   return (
     <div className="mtx">
       <header className="mtx-head">
-        <button className="vault-brand" onClick={() => navigate("build")}>
+        <button className="vault-brand" onClick={() => navigate("app")}>
           <span className="site-mark">
             <Icon name="logo" size={14} />
           </span>
@@ -55,8 +55,8 @@ export default function Metrics() {
           <button className="is-active">
             <Icon name="route" size={14} /> Runtime
           </button>
-          <button onClick={() => navigate("build")}>
-            <Icon name="layers" size={14} /> Build room
+          <button onClick={() => navigate("app")}>
+            <Icon name="layers" size={14} /> Chat
           </button>
         </div>
         <select className="mtx-select" value={selected} onChange={(e) => setSelected(e.target.value)}>
