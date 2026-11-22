@@ -253,7 +253,6 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
         {s.name: run.contracts[s.id] for s in run.specialists if s.id in run.contracts and s.id != agent.id}
     )
     research = context.notes_context(notes)
-    sink = FileSink(run, agent)
 
     try:
         # Pass 1 — deliberation. Slow, visible, and it grounds the code.
@@ -344,58 +343,78 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
 
         # Pass 2 — the file itself, written against the agent's own plan. The answer may
         # carry extra files behind <<<FILE path>>> markers; each lands on its own path.
-        await run.emit({"type": "status", "agent": agent.id, "status": "writing"})
-        files, code_usage = await executor.compose(
-            agent,
-            [
-                {
-                    "role": "system",
-                    "content": prompts.CODE.format(
-                        name=agent.name,
-                        role=agent.role,
-                        file=unit.file,
-                        objective=unit.objective,
-                        prompt=run.prompt,
-                        acceptance=intent.contract(getattr(run, "acceptance", None) or []),
-                        goal=prompts.GOAL_CONTRACT.format(goal=goal.read(run)),
-                        reasoning=context.clip(reasoning, REASONING_CLIP_TOKENS),
-                        critique=context.clip(critique, CRITIQUE_CLIP_TOKENS) or "(no reviewer pass for this run)",
-                        design=prompts.DESIGN_CONTRACT,
-                        contracts=peers,
-                        peer_files=context.files_context(run.files, exclude=unit.file),
-                        lessons=memory.lessons(),
-                        progress=progress.orient(run),
-                    ),
-                },
-                {"role": "user", "content": f"Write {unit.file} now."},
-            ],
-            on_think=lambda text: run.emit({"type": "think", "agent": agent.id, "delta": text}),
-            on_code=sink.write,
-            on_marker=sink.start,
-            default_path=unit.file,
-        )
-        await run.emit(run.track_usage(agent, "writing", code_usage))
-
-        # A provider that stopped at its token ceiling left a prefix, not a file. The
-        # verifier would report that as a syntax error and the author would be asked to
-        # repair a file it never finished writing — so say it plainly, and give the
-        # author one continuation pass before the file is treated as written.
-        if code_usage.truncated:
-            await run.emit(
-                {
-                    "type": "message",
-                    "from": "harness",
-                    "kind": "notice",
-                    "text": (
-                        f"{unit.file} hit the provider's output ceiling and was cut mid-file. "
-                        "Asking for the rest before checking it."
-                    ),
-                }
+        shipped: list[str] = []
+        for attempt in range(2):
+            sink = FileSink(run, agent)
+            ask = f"Write {unit.file} now."
+            if attempt:
+                await run.emit(
+                    {
+                        "type": "message",
+                        "from": "verify",
+                        "text": f"{unit.file} was not written; asking {agent.name} again.",
+                        "kind": "review",
+                    }
+                )
+                ask = (
+                    f"Your previous answer produced no file for {unit.file}. "
+                    f"Write the complete file now, starting with <<<FILE {unit.file}>>>."
+                )
+            await run.emit({"type": "status", "agent": agent.id, "status": "writing"})
+            files, code_usage = await executor.compose(
+                agent,
+                [
+                    {
+                        "role": "system",
+                        "content": prompts.CODE.format(
+                            name=agent.name,
+                            role=agent.role,
+                            file=unit.file,
+                            objective=unit.objective,
+                            prompt=run.prompt,
+                            acceptance=intent.contract(getattr(run, "acceptance", None) or []),
+                            goal=prompts.GOAL_CONTRACT.format(goal=goal.read(run)),
+                            reasoning=context.clip(reasoning, REASONING_CLIP_TOKENS),
+                            critique=context.clip(critique, CRITIQUE_CLIP_TOKENS) or "(no reviewer pass for this run)",
+                            design=prompts.DESIGN_CONTRACT,
+                            contracts=peers,
+                            peer_files=context.files_context(run.files, exclude=unit.file),
+                            lessons=memory.lessons(),
+                            progress=progress.orient(run),
+                        ),
+                    },
+                    {"role": "user", "content": ask},
+                ],
+                on_think=lambda text: run.emit({"type": "think", "agent": agent.id, "delta": text}),
+                on_code=sink.write,
+                on_marker=sink.start,
+                default_path=unit.file,
             )
-            files = await _continue_file(run, agent, unit, files, sink)
+            await run.emit(run.track_usage(agent, "writing", code_usage))
 
-        shipped = await sink.finish(files)
-        if not shipped:
+            # A provider that stopped at its token ceiling left a prefix, not a file. The
+            # verifier would report that as a syntax error and the author would be asked to
+            # repair a file it never finished writing — so say it plainly, and give the
+            # author one continuation pass before the file is treated as written.
+            if code_usage.truncated:
+                await run.emit(
+                    {
+                        "type": "message",
+                        "from": "harness",
+                        "kind": "notice",
+                        "text": (
+                            f"{unit.file} hit the provider's output ceiling and was cut mid-file. "
+                            "Asking for the rest before checking it."
+                        ),
+                    }
+                )
+                files = await _continue_file(run, agent, unit, files, sink)
+
+            shipped = await sink.finish(files)
+            if unit.file in shipped:
+                break
+
+        if unit.file not in shipped:
             await run.emit(
                 {"type": "error", "message": f"{agent.name} produced no code for {unit.file}", "agent": agent.id}
             )

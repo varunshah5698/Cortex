@@ -8,12 +8,15 @@ happens when the same call repeats. Each is deterministic, so each is pinned her
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ai_harness.modules import protected, sandbox, thrash, toolchain, untrusted  # noqa: E402
+from ai_harness.modules import protected, runner, sandbox, shell, thrash, toolchain, untrusted  # noqa: E402
 
 # ---------- sandbox ----------
 
@@ -41,6 +44,47 @@ def test_prefix_wraps_the_command_when_available(monkeypatch, tmp_path):
     monkeypatch.setattr(sandbox, "available", lambda: True)
     prefix = sandbox.prefix("run1", tmp_path)
     assert prefix[0] == "sandbox-exec" and prefix[-1] == "--"
+
+
+def _make_profile_unwritable(monkeypatch, tmp_path):
+    """Make the sandbox profile impossible to write, as another account's file did.
+
+    The shared temp directory is not ours: a non-directory in the per-uid slot used to
+    make the write fail and the command run unsandboxed while `describe` claimed
+    containment.
+    """
+    monkeypatch.setattr(sandbox, "available", lambda: True)
+    monkeypatch.setattr(sandbox.tempfile, "gettempdir", lambda: str(tmp_path))
+    getuid = getattr(os, "getuid", None)
+    uid = getuid() if callable(getuid) else None
+    slot = tmp_path / ("harness-sandbox" if uid is None else f"harness-sandbox-{uid}")
+    slot.write_text("not a directory", encoding="utf-8")
+
+
+def test_a_profile_that_cannot_be_written_fails_closed(monkeypatch, tmp_path):
+    _make_profile_unwritable(monkeypatch, tmp_path)
+    with pytest.raises(sandbox.SandboxError):
+        sandbox.prefix("run1", tmp_path)
+
+
+def test_shell_refuses_the_command_when_the_profile_cannot_be_written(monkeypatch, tmp_path):
+    # The tool promises containment before it spawns, so a profile it cannot write is a
+    # refusal, not a child running with the owner's access.
+    _make_profile_unwritable(monkeypatch, tmp_path)
+    monkeypatch.setattr(shell, "ENABLED", True)
+    with pytest.raises(shell.ShellDenied) as exc:
+        asyncio.run(shell.run("ls", tmp_path, "run-1"))
+    assert "sandbox profile could not be prepared" in str(exc.value)
+
+
+def test_runner_fails_the_step_when_the_profile_cannot_be_written(monkeypatch, tmp_path):
+    # An install executes code the model wrote; with no profile there is no containment,
+    # so the spawn path must raise before a process exists.
+    _make_profile_unwritable(monkeypatch, tmp_path)
+    service = runner.Service(run_id="no-profile", workspace=tmp_path, approved=True)
+    with pytest.raises(runner.RunnerError) as exc:
+        asyncio.run(service._spawn(["npm", "install"], tmp_path))
+    assert "containment could not be prepared" in str(exc.value)
 
 
 # ---------- untrusted content ----------

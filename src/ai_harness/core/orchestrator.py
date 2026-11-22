@@ -246,9 +246,14 @@ class Orchestrator:
             await self.run.emit({"type": "cleanstate", **clean})
         if not clean.get("ok", True):
             self.run.done = False
+            # Every ending gets a name, including this one: a gate refused `done`, which
+            # is `unverified`, and a blocked run is exactly what a trajectory is for.
+            self.run.exit_status = exit.UNVERIFIED
             self.persist_metrics()
             handoff.write(self.run)
             receipt.write(self.run)
+            detail = (clean.get("issues") or [{}])[0].get("detail") or "clean-state check failed"
+            trajectory.write(self.run, status=exit.UNVERIFIED, submission=detail, report=report)
             memory.append(self.run, f"clean-state check failed — {clean.get('errors', 0)} error(s)")
             event_log(self.run.run_id, "clean-state-failed", issues=clean.get("issues", [])[:12])
             await asyncio.to_thread(
@@ -279,9 +284,12 @@ class Orchestrator:
         verdict = await self.check_goal(reviewer_agent)
         if verdict is not None and verdict.status == goal.UNMET:
             self.run.done = False
+            self.run.exit_status = exit.UNVERIFIED
             self.persist_metrics()
             self.run.goal = verdict.public()
+            handoff.write(self.run)
             receipt.write(self.run)
+            trajectory.write(self.run, status=exit.UNVERIFIED, submission=verdict.reason, report=report)
             memory.append(self.run, f"goal not met — {verdict.reason}")
             event_log(self.run.run_id, "goal-unmet", reason=verdict.reason, missing=verdict.missing[:8])
             await asyncio.to_thread(
@@ -309,9 +317,11 @@ class Orchestrator:
         grade = await self.grade(reviewer_agent)
         if grade is not None and grade.verdict == rubric.BLOCK:
             self.run.done = False
+            self.run.exit_status = exit.UNVERIFIED
             self.persist_metrics()
             handoff.write(self.run)
             receipt.write(self.run)
+            trajectory.write(self.run, status=exit.UNVERIFIED, submission=grade.missing, report=report)
             memory.append(self.run, f"rubric blocked the run — {grade.missing or 'see the scores'}")
             event_log(self.run.run_id, "rubric-blocked", total=grade.total, missing=grade.missing[:200])
             await asyncio.to_thread(

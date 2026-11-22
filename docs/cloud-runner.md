@@ -59,7 +59,10 @@ The harness stores it server-side only. The runner accepts `POST /runs` only wit
 `HARNESS_RUNNER_MODE=vercel` deploys each finished static/Node run to a temporary Vercel
 project (`cortex-<run_id>`) and uses the production deployment URL directly. The CLI
 login on this machine is enough locally; a headless host sets `HARNESS_VERCEL_TOKEN`.
-A run is removed at `HARNESS_VERCEL_TTL` or on `POST /serve/stop`.
+A run is removed at `HARNESS_VERCEL_TTL` or on `POST /serve/stop`. A failed deployment
+reports the CLI's own line (`Error: Not authorized`, not just `exited 1`) and, when this
+instance also has the cloud runner, serves the run there instead of leaving a dead
+preview.
 
 The project is created with an exact name, SSO protection is disabled (it is a public
 per-run preview by design), and the whole project is removed at teardown. A Python ASGI

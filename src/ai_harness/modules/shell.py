@@ -25,7 +25,9 @@ replaces the trust:
 from __future__ import annotations
 
 import asyncio
+import os
 import shlex
+import signal
 from pathlib import Path
 
 from ..config.settings import AGENT_SHELL
@@ -84,18 +86,35 @@ async def run(command: str, workspace: Path, run_id: str, timeout: float = TIMEO
     if effect != permissions.ALLOW:
         raise ShellDenied(f"refused by policy ({effect}): {reason}")
 
-    wrapped = [*sandbox.prefix(run_id, workspace), *argv]
+    try:
+        wrapped = [*sandbox.prefix(run_id, workspace), *argv]
+    except sandbox.SandboxError as exc:
+        # The tool promised containment; it may not run the command without it.
+        raise ShellDenied(f"the sandbox profile could not be prepared: {exc}") from exc
     process = await asyncio.create_subprocess_exec(
         *wrapped,
         cwd=str(workspace),
+        # A model's command must never read the harness's own stdin: `cat` with no
+        # arguments would block until the timeout instead of answering.
+        stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         env=permissions.safe_env({"CI": "1", "NO_COLOR": "1"}),
+        # Its own session, so a timeout can kill the whole tree. `process.kill()` signals
+        # only the direct child, and `sandbox.prefix` may wrap the command in another
+        # process: killing the wrapper would leave the command running.
+        start_new_session=os.name == "posix",
     )
     try:
         stdout, _ = await asyncio.wait_for(process.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
-        process.kill()
+        _kill_tree(process)
+        # `communicate()` was cancelled by the wait; reaping here closes the transport and
+        # stops the child becoming a zombie the run never collects.
+        try:
+            await process.wait()
+        except (ProcessLookupError, OSError):
+            pass
         return f"[timeout after {timeout:.0f}s]"
 
     text = stdout.decode("utf-8", "replace").strip()
@@ -105,3 +124,15 @@ async def run(command: str, workspace: Path, run_id: str, timeout: float = TIMEO
     if code != 0:
         return f"exit {code}\n{text}" if text else f"exit {code} (no output)"
     return text or "(no output)"
+
+
+def _kill_tree(process) -> None:
+    """Kill the process *group*, falling back to the direct child off POSIX."""
+    try:
+        if os.name == "posix":
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        else:
+            process.kill()
+    except (ProcessLookupError, PermissionError, OSError):
+        # Already gone, or not ours to signal. Either way it is not running.
+        pass

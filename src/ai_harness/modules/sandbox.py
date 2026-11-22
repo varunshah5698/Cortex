@@ -18,12 +18,17 @@ On macOS that is `sandbox-exec` with a generated profile:
 Everywhere else — another platform, `HARNESS_SANDBOX=0`, or a machine without
 `sandbox-exec` — the child runs unsandboxed and `describe()` says so. The harness never
 claims containment it does not have; the service log carries the sentence either way.
+
+A profile that cannot be prepared is *not* another such fallback: `prefix` raises
+`SandboxError` and the command does not start. A child running with the owner's access
+while the log says it is contained is exactly the failure this module exists to prevent.
 """
 
 from __future__ import annotations
 
 import os
 import shutil
+import stat
 import sys
 import tempfile
 from pathlib import Path
@@ -44,6 +49,10 @@ SECRET_READS = (
     ".kube",
 )
 SYSTEM_WRITES = ("/private/tmp", "/tmp", "/dev", "/var/folders")
+
+
+class SandboxError(RuntimeError):
+    """Containment was required and could not be set up. The command must not run."""
 
 
 def available() -> bool:
@@ -76,25 +85,78 @@ def profile(workspace: Path) -> str:
     )
 
 
+def _profile_dir() -> Path:
+    """A private directory for this account's profiles.
+
+    The temp directory is shared. A fixed `harness-sandbox-<run>.sb` there let a file
+    owned by another user shadow ours, so the write failed and the run silently fell
+    back to no containment. One directory per uid, mode 0700 and owned by us, is ours
+    alone; a directory we cannot vouch for is an error, not a fallback.
+    """
+    getuid = getattr(os, "getuid", None)
+    uid = getuid() if callable(getuid) else None
+    name = "harness-sandbox" if uid is None else f"harness-sandbox-{uid}"
+    path = Path(tempfile.gettempdir()) / name
+    try:
+        path.mkdir(mode=0o700, exist_ok=True)
+        info = path.lstat()
+        if not stat.S_ISDIR(info.st_mode) or (uid is not None and info.st_uid != uid):
+            raise SandboxError(f"{path} is not a directory owned by this account")
+        if stat.S_IMODE(info.st_mode) & 0o077:
+            path.chmod(0o700)
+    except SandboxError:
+        raise
+    except OSError as exc:
+        raise SandboxError(f"cannot prepare the sandbox profile directory {path}: {exc}") from exc
+    return path
+
+
+def _write_profile(path: Path, text: str) -> None:
+    """Write the profile atomically: `sandbox-exec` must never read a half-written one."""
+    try:
+        fd, scratch = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    except OSError as exc:
+        raise SandboxError(f"cannot create the sandbox profile {path}: {exc}") from exc
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(scratch, path)
+    except OSError as exc:
+        try:
+            os.unlink(scratch)
+        except OSError:
+            pass
+        raise SandboxError(f"cannot write the sandbox profile {path}: {exc}") from exc
+
+
 def _profile_file(run_id: str, workspace: Path) -> Path:
-    path = Path(tempfile.gettempdir()) / f"harness-sandbox-{run_id}.sb"
+    """The profile for this run, written only when its content changed."""
+    # A run id is a name, never a path: `a/b` must not escape the profile directory.
+    run_name = Path(run_id).name or "run"
+    path = _profile_dir() / f"{run_name}.sb"
     text = profile(workspace)
     try:
-        if path.read_text(encoding="utf-8") != text:
-            path.write_text(text, encoding="utf-8")
-    except OSError:
-        path.write_text(text, encoding="utf-8")
+        current = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        current = None
+    except OSError as exc:
+        raise SandboxError(f"cannot read the sandbox profile {path}: {exc}") from exc
+    if current != text:
+        _write_profile(path, text)
     return path
 
 
 def prefix(run_id: str, workspace: Path) -> list[str]:
-    """`sandbox-exec -f profile --` when containment is available, else nothing."""
+    """`sandbox-exec -f profile --` when containment is available, else nothing.
+
+    A profile that cannot be prepared raises `SandboxError` rather than yielding an
+    empty prefix: the caller must not start the command unprotected.
+    """
     if not available():
         return []
-    try:
-        return ["sandbox-exec", "-f", str(_profile_file(run_id, workspace)), "--"]
-    except OSError:
-        return []
+    return ["sandbox-exec", "-f", str(_profile_file(run_id, workspace)), "--"]
 
 
 def describe() -> str:

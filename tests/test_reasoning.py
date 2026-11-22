@@ -63,6 +63,46 @@ def test_a_deep_build_is_critiqued_by_another_specialist_before_code(monkeypatch
     ), "the critique must stream into the visible reasoning channel"
 
 
+def test_a_deep_file_that_does_not_parse_is_repaired_before_the_next_file(monkeypatch, tmp_path):
+    """Every file is checked as it lands, not only on Ultra and not only at the end.
+
+    Writing a full-crew build one file at a time and looking at the tree only after the
+    last one is what let a broken file be imported by every file written after it.
+    """
+    monkeypatch.setattr(state_mod, "RUNS_ROOT", tmp_path)
+    repaired: list[str] = []
+
+    async def fake_stream(agent, messages, think=True, stats=None):  # noqa: ANN001
+        system = messages[0]["content"]
+        if "Attack the plan" in system:
+            stats.content.append("VERDICT: OK")
+            yield ("token", "VERDICT: OK")
+            return
+        if "Think before writing" in system:
+            stats.content.append("1. write the module")
+            yield ("think", "1. write the module")
+            return
+        for line in ("<<<FILE app.py>>>\n", "def broken(:\n"):
+            stats.content.append(line)
+            yield ("content", line)
+
+    async def fake_repair(run, agent, path, findings, check, max_steps=0):  # noqa: ANN001
+        repaired.append(path)
+        return True
+
+    monkeypatch.setattr(llm, "stream", fake_stream)
+    monkeypatch.setattr(execution.agent_loop, "repair", fake_repair)
+
+    author = Specialist(id="a1", name="Ada", role="backend", model="stub")
+    reviewer = Specialist(id="r1", name="Rex", role="reviewer", model="stub")
+    run = RunState(run_id="per-file", prompt="a service", specialists=[author, reviewer], depth="deep")
+    unit = WorkUnit(id="wu-1", title="Logic", role="backend", file="app.py", objective="the module", agent="a1")
+
+    asyncio.run(execution.write_unit(run, unit, []))
+
+    assert repaired == ["app.py"], "a deep run must fix a file that does not parse before moving on"
+
+
 def test_a_rambling_reasoning_stream_is_cut_off(monkeypatch):
     monkeypatch.setattr(executor, "MAX_REASONING_CHARS", 100)
     seen: list[str] = []

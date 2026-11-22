@@ -34,26 +34,26 @@ def files_context(files: dict[str, dict], exclude: str = "", max_files: int = 0,
     A specialist that sees the real markup and selectors keeps them; one that sees only
     a contract invents a second copy. Bodies are clipped, so this is context, not a dump.
 
-    The defaults were 4 files at 320 tokens each — about 1,280 tokens of peer context for
-    a tree that may be a dozen files. That is not enough to keep ids and imports
-    consistent, which is the exact failure this function exists to prevent, so the writer
-    fell back to guessing. The budget is now a setting and it is sized to hold a real
-    page: every peer file up to a substantial clip. `HARNESS_PEER_FILES=0` restores the
-    old "first four" behaviour for an operator who wants a tighter prompt.
+    The most recently written files come first. Taking the alphabetically first four was
+    how an author late in the plan saw ``About.tsx`` and ``App.tsx`` but not the component
+    written immediately before it — every file was written against the wrong neighbours.
+    The budget is a setting (``PEER_FILES``/``PEER_TOKENS``); ``HARNESS_PEER_FILES=0``
+    includes every peer file, which is the default because a tidy prompt that omits the
+    file being imported is the failure this function exists to prevent.
     """
     limit_files = max_files or PEER_FILES
     limit_tokens = tokens or PEER_TOKENS
-    chosen: list[str] = []
-    for path in sorted(files):
-        if path == exclude or path in ("todo.md", "RECEIPT.md"):
-            continue
-        content = str((files.get(path) or {}).get("content") or "").strip()
-        if not content:
-            continue
-        chosen.append(f"--- {path} ---\n{clip(content, limit_tokens)}")
-        if limit_files and len(chosen) >= limit_files:
-            break
-    return "\n\n".join(chosen) or "No peer file has been written yet."
+    written = [
+        path
+        for path in files
+        if path != exclude
+        and path not in ("todo.md", "RECEIPT.md")
+        and str((files.get(path) or {}).get("content") or "").strip()
+    ]
+    recent = written[-limit_files:] if limit_files > 0 else written
+    chosen = sorted(recent)
+    sections = [f"--- {path} ---\n{clip(str(files[path]['content']).strip(), limit_tokens)}" for path in chosen]
+    return "\n\n".join(sections) or "No peer file has been written yet."
 
 
 def notes_context(notes: list[str]) -> str:
