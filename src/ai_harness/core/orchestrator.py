@@ -9,7 +9,24 @@ import traceback
 from ..config.settings import REPAIR_ROUNDS
 from ..core.state import RunState, now_iso
 from ..models import Specialist, WorkUnit
-from ..modules import cloud_sync, failures, llm, memory, progress, prompts, receipt, runtime
+from ..modules import (
+    cleanstate,
+    cloud_sync,
+    exit,
+    failures,
+    features,
+    goal,
+    handoff,
+    llm,
+    memory,
+    progress,
+    prompts,
+    receipt,
+    rubric,
+    runtime,
+    tasks,
+    trajectory,
+)
 from ..modules.budget import BudgetExceeded
 from ..nodes import execution, planning, research, review
 from ..utils.logger import event_log
@@ -149,20 +166,124 @@ class Orchestrator:
             )
             return
 
+        # The clean-state gate (Lecture 12): the verifier asked whether the tree holds
+        # together; this asks whether the run left the next one a mess — an empty planned
+        # file, a feature passing without evidence, no progress record, no handoff. It is
+        # mechanical and cheap, so it runs before the goal gate, which may spend a call.
+        clean = cleanstate.check(self.run)
+        if clean.get("issues"):
+            await self.run.emit({"type": "cleanstate", **clean})
+        if not clean.get("ok", True):
+            self.run.done = False
+            self.persist_metrics()
+            handoff.write(self.run)
+            receipt.write(self.run)
+            memory.append(self.run, f"clean-state check failed — {clean.get('errors', 0)} error(s)")
+            event_log(self.run.run_id, "clean-state-failed", issues=clean.get("issues", [])[:12])
+            await asyncio.to_thread(
+                cloud_sync.finish,
+                self.run.run_id,
+                "blocked",
+                f"{clean.get('errors', 0)} clean-state error(s)",
+                clean.get("errors", 0),
+            )
+            await self.run.emit(
+                {
+                    "type": "error",
+                    "blocked": True,
+                    "cleanstate": clean,
+                    "message": (
+                        f"Run stopped short: the clean-state check found {clean.get('errors', 0)} error(s). "
+                        "Nothing was reported as done — see the findings for what is still open."
+                    ),
+                }
+            )
+            return
+
+        # The goal gate: the verifier answered "does this tree hold together", which is not
+        # the question the person asked. This asks whether the goal the run wrote down
+        # before it started is actually met, and it is allowed to refuse the stop. It runs
+        # after the verifier because a structurally broken tree is already a refusal, and
+        # a gate that reports both at once makes the transcript harder to act on.
+        verdict = await self.check_goal(reviewer_agent)
+        if verdict is not None and verdict.status == goal.UNMET:
+            self.run.done = False
+            self.persist_metrics()
+            self.run.goal = verdict.public()
+            receipt.write(self.run)
+            memory.append(self.run, f"goal not met — {verdict.reason}")
+            event_log(self.run.run_id, "goal-unmet", reason=verdict.reason, missing=verdict.missing[:8])
+            await asyncio.to_thread(
+                cloud_sync.finish,
+                self.run.run_id,
+                "blocked",
+                f"goal not met: {verdict.reason}",
+                0,
+            )
+            await self.run.emit(
+                {
+                    "type": "error",
+                    "blocked": True,
+                    "goal": verdict.public(),
+                    "message": (
+                        f"Run stopped short: the goal was not met — {verdict.reason}. Nothing was reported as done."
+                    ),
+                }
+            )
+            return
+
+        # The evaluator rubric (Lecture 11): the mechanical gates are done, so this is the
+        # only question left — was this a good session? It is opt-in and it can only make
+        # the verdict stricter, never more generous, so it cannot turn a blocked run green.
+        grade = await self.grade(reviewer_agent)
+        if grade is not None and grade.verdict == rubric.BLOCK:
+            self.run.done = False
+            self.persist_metrics()
+            handoff.write(self.run)
+            receipt.write(self.run)
+            memory.append(self.run, f"rubric blocked the run — {grade.missing or 'see the scores'}")
+            event_log(self.run.run_id, "rubric-blocked", total=grade.total, missing=grade.missing[:200])
+            await asyncio.to_thread(
+                cloud_sync.finish,
+                self.run.run_id,
+                "blocked",
+                f"rubric blocked: {grade.missing or 'scores too low'}",
+                0,
+            )
+            await self.run.emit(
+                {
+                    "type": "error",
+                    "blocked": True,
+                    "rubric": grade.public(),
+                    "message": (
+                        f"Run stopped short: the evaluator scored this session {grade.total}/12 and blocked it. "
+                        f"{grade.missing or 'See the scores.'}"
+                    ),
+                }
+            )
+            return
+
         await self.synthesize()
 
         self.run.done = True
         self.persist_metrics()
+        # The handoff is written before the receipt, so a run that ends here leaves the
+        # next one a starting point even if the receipt write is the thing that fails.
+        handoff.write(self.run)
         receipt.write(self.run)
         memory.append(self.run, "shipped" if report.get("ok", True) else "shipped with warnings")
+        status = exit.of(True, report)
+        self.run.exit_status = status
+        trajectory.write(self.run, status=status, submission=self.run.answer, report=report)
         await self.run.emit(
             {
                 "type": "done",
                 "files": self.run.file_summary(),
                 "metrics": self.run.metrics(),
-                # `done` is a verification verdict, not a build report: the pipeline never
-                # compiles anything, so both halves are carried explicitly and a run that
-                # was only checked says `previewed: false, build: null`.
+                # The typed status is the machine-readable half of `done`: a reader that
+                # only wants "did this run succeed, and if not why" does not have to
+                # parse the transcript to find out.
+                "exit_status": status,
                 "build": self.run.build,
                 "previewed": self.run.previewed,
                 "finished": now_iso(),
@@ -176,6 +297,64 @@ class Orchestrator:
             f"{len(self.run.files)} file(s) verified",
             0,
         )
+
+    async def check_goal(self, agent: Specialist):
+        """Ask the goal gate whether this run met what it set out to do.
+
+        Returns a `goal.Verdict` or None when the gate is off. The evaluator is a model
+        call, so it is only reached when no mechanical sensor covers the goal. The gate
+        refuses once and the run stops: it does not loop, because a gate that can always
+        say "not yet" is a loop with no exit. A `met` or `unknown` verdict lets the run
+        finish exactly as it did before this gate existed.
+        """
+        if not goal.GOAL_ENABLED:
+            return None
+        statement = goal.read(self.run)
+        self.run.goal_text = statement
+        verdict = await goal.evaluate(self.run, agent, self._goal_ask(agent))
+        self.run.goal = verdict.public()
+        await self.run.emit({"type": "goal", **verdict.public()})
+        return verdict
+
+    async def grade(self, agent: Specialist):
+        """Score the session with the evaluator rubric, or None when it is off.
+
+        The rubric is a model call by a specialist that did not write the work, so it is
+        opt-in. It cannot make a verdict more generous: `rubric.parse` takes the stricter
+        of the total's implied verdict and the model's stated one, and a malformed answer
+        is `unknown`, which never blocks and never approves.
+        """
+        if not rubric.RUBRIC_ENABLED:
+            return None
+        score = await rubric.evaluate(self.run, agent, self._rubric_ask(agent))
+        await self.run.emit({"type": "rubric", **score.public()})
+        return score
+
+    def _rubric_ask(self, agent: Specialist):
+        """The evaluator call for the rubric, or None when there is no model to make it."""
+
+        async def ask(system: str, user: str) -> str:
+            text, usage = await llm.call(
+                agent,
+                [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            )
+            await self.run.emit(self.run.track_usage(agent, "rubric", usage))
+            return text
+
+        return ask
+
+    def _goal_ask(self, agent: Specialist):
+        """The evaluator call, or None when there is no model to make it with."""
+
+        async def ask(system: str, user: str) -> str:
+            text, usage = await llm.call(
+                agent,
+                [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            )
+            await self.run.emit(self.run.track_usage(agent, "goal-gate", usage))
+            return text
+
+        return ask
 
     async def run_all(self) -> None:
         # Bind this run for every nested call (see modules/runtime.py).
@@ -229,6 +408,30 @@ class Orchestrator:
             all_local = all(spec.is_local for spec in self.run.specialists)
             units, files, questions = await planning.run(self.run, planner)
             self.run.units = units
+            # The task graph and the goal are written before any file exists, so a resume
+            # judges the same goal and the same order rather than re-deriving both.
+            seeded = tasks.seed(self.run, units)
+            if seeded:
+                await self.run.emit(
+                    {
+                        "type": "tasks",
+                        "tasks": [task.public() for task in seeded],
+                        "summary": tasks.summary(self.run),
+                    }
+                )
+            # The feature list is the scope gate (Lecture 08): one active feature, and
+            # `passing` only through recorded evidence. Seeded from the same plan, so the
+            # two views of the work cannot disagree about what was asked for.
+            feature_seed = features.seed(self.run, units)
+            if feature_seed:
+                await self.run.emit(
+                    {
+                        "type": "features",
+                        "features": [feature.public() for feature in feature_seed],
+                        "summary": features.summary(self.run),
+                    }
+                )
+            goal.write(self.run, goal.derive(self.run))
 
             if self.run.depth != "quick":
                 researcher = self.pick("research", "planner")
@@ -257,6 +460,8 @@ class Orchestrator:
             self.persist_metrics()
             receipt.write(self.run)
             failures.record(self.run, self.run.verification, "cancelled")
+            self.run.exit_status = exit.CANCELLED
+            trajectory.write(self.run, status=exit.CANCELLED, submission="cancelled")
             await self.run.emit({"type": "error", "message": "Run cancelled"})
             raise
         except runtime.RunDeadlineExceeded as exc:
@@ -270,11 +475,14 @@ class Orchestrator:
             failures.record(self.run, self.run.verification, str(exc))
             receipt.write(self.run)
             event_log(self.run.run_id, "timeout", error=str(exc), files=len(files))
+            self.run.exit_status = exit.TIME
+            trajectory.write(self.run, status=exit.TIME, submission=str(exc))
             await self.run.emit(
                 {
                     "type": "error",
                     "blocked": True,
                     "timed_out": True,
+                    "exit_status": exit.TIME,
                     "files": files,
                     "message": (f"Run stopped at its time limit — {exc}. {len(files)} file(s) are on disk: {names}"),
                 }
@@ -284,8 +492,12 @@ class Orchestrator:
             failures.record(self.run, self.run.verification, str(exc))
             receipt.write(self.run)
             event_log(self.run.run_id, "budget", error=str(exc), **self.run.budget.as_dict())
+            self.run.exit_status = exit.LIMITS
+            trajectory.write(self.run, status=exit.LIMITS, submission=str(exc))
             await self.run.emit({"type": "budget", **self.run.budget.as_dict(), "message": str(exc)})
-            await self.run.emit({"type": "error", "message": f"Run stopped by its budget — {exc}"})
+            await self.run.emit(
+                {"type": "error", "exit_status": exit.LIMITS, "message": f"Run stopped by its budget — {exc}"}
+            )
         except Exception as exc:  # noqa: BLE001 - any node failure must reach the UI
             self.persist_metrics()
             # The traceback goes to the log, not the UI: a bare `ValueError: too many
@@ -295,7 +507,10 @@ class Orchestrator:
             failures.record(self.run, self.run.verification, f"{type(exc).__name__}: {exc}")
             receipt.write(self.run)
             event_log(self.run.run_id, "error", error=f"{type(exc).__name__}: {exc}")
-            await self.run.emit({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
+            status = exit.classify(exc)
+            self.run.exit_status = status
+            trajectory.write(self.run, status=status, submission=f"{type(exc).__name__}: {exc}")
+            await self.run.emit({"type": "error", "exit_status": status, "message": f"{type(exc).__name__}: {exc}"})
 
     async def resume_all(self) -> None:
         """Continue a run from what is on disk, without re-planning or re-writing it.

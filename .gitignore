@@ -44,3 +44,9 @@ node_modules
 .scratch/
 .perch-probe.txt
 .bld-polish-*.css
+
+# Generated eval handoff notes (per-run, like evals/results/)
+evals/handoffs/
+
+# Per-machine hook rules (HARNESS_HOOKS_FILE default)
+harness.hooks.json

@@ -182,6 +182,10 @@ export default function Build() {
   const serviceSeq = useRef(0);
   const startedKey = useRef<string | null>(null);
   const autoBooted = useRef<string | null>(null);
+  // A run restored from storage or the history picker is being reopened, not started
+  // here. Its stream asks for `replay=0` so a finished run does not re-deliver the whole
+  // transcript (and its `done`) every time the room is entered.
+  const reopening = useRef<boolean>(Boolean(localStorage.getItem("cortex:lastRun")));
 
   const totals = useMemo(() => {
     const list = Object.values(agents);
@@ -610,12 +614,16 @@ export default function Build() {
   useEffect(() => {
     if (!runId) return;
     let source: EventSource | null = null;
-    source = subscribe(runId, (event) => {
-      handle(event);
-      // A finished run's stream ends, and EventSource would otherwise reconnect and
-      // replay the whole log forever: close once the terminal event arrives.
-      if (event.type === "done" || event.type === "error") source?.close();
-    });
+    source = subscribe(
+      runId,
+      (event) => {
+        handle(event);
+        // A finished run's stream ends, and EventSource would otherwise reconnect and
+        // replay the whole log forever: close once the terminal event arrives.
+        if (event.type === "done" || event.type === "error") source?.close();
+      },
+      { replay: !reopening.current },
+    );
     return () => source?.close();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId]);
@@ -791,6 +799,7 @@ export default function Build() {
       localStorage.setItem("cortex:lastRun", id);
       setService(null);
       setLogsOpen(false);
+      reopening.current = false;
       setRunId(id);
     } catch (err) {
       setRunning(false);
@@ -949,6 +958,7 @@ export default function Build() {
                 localStorage.setItem("cortex:lastRun", id);
                 setService(null);
                 setShare(null);
+                reopening.current = true;
                 setRunId(id);
               }}
               title="Reopen a previous run"
@@ -973,7 +983,13 @@ export default function Build() {
             Auto-approve
           </button>
           {pendingCount > 0 && (
-            <button className="bld-approve" onClick={() => void approveAll()} disabled={serviceBusy || shareBusy}>
+            <button
+              className="bld-approve"
+              onClick={() => void approveAll()}
+              disabled={serviceBusy || shareBusy}
+              title={serviceBusy ? "Approving…" : `Approve all · ${pendingCount}`}
+              aria-label={serviceBusy ? "Approving" : `Approve all ${pendingCount}`}
+            >
               <Icon name="check" size={13} />
               {serviceBusy ? "Approving…" : `Approve all · ${pendingCount}`}
             </button>

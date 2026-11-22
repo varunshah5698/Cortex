@@ -55,6 +55,12 @@ class StreamStats:
     usage: Usage = field(default_factory=Usage)
     content: list[str] = field(default_factory=list)
     thinking: list[str] = field(default_factory=list)
+    # The provider stopped this response at its output-token ceiling (`finish_reason`
+    # of "length"), so the text is a prefix of what the model was producing. A truncated
+    # file is not a small file: it is a file whose last block was cut mid-token, and
+    # nothing downstream can tell that from a model that simply stopped writing. The
+    # flag is the difference between "the model chose to end here" and "the ceiling did".
+    truncated: bool = False
 
     @property
     def text(self) -> str:

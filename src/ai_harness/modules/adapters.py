@@ -248,6 +248,13 @@ async def _openai(
                     stats.usage.prompt_tokens = int(usage.get("prompt_tokens") or 0)
                     stats.usage.completion_tokens = int(usage.get("completion_tokens") or 0)
                 delta = ((event.get("choices") or [{}])[0]).get("delta") or {}
+                # `finish_reason` arrives on the chunk that ends the message. "length"
+                # means the provider hit the output ceiling, so what we have is a prefix
+                # of the answer — the one truncation that is otherwise invisible, because
+                # a cut-off file still parses as text.
+                finish = ((event.get("choices") or [{}])[0]).get("finish_reason")
+                if finish == "length":
+                    stats.truncated = True
                 reasoning = delta.get("reasoning_content") or delta.get("reasoning") or delta.get("thinking")
                 if reasoning:
                     stats.thinking.append(str(reasoning))
@@ -320,6 +327,9 @@ async def _anthropic(
                 usage = event.get("usage") or {}
                 if usage:
                     stats.usage.completion_tokens = int(usage.get("output_tokens") or 0)
+                # Anthropic reports the stop reason on the closing delta, not per chunk.
+                if (event.get("delta") or {}).get("stop_reason") == "max_tokens":
+                    stats.truncated = True
             elif kind == "message_stop":
                 return
 
@@ -370,6 +380,9 @@ async def _google(
                 stats.usage.prompt_tokens = int(meta.get("promptTokenCount") or stats.usage.prompt_tokens)
                 stats.usage.completion_tokens = int(meta.get("candidatesTokenCount") or stats.usage.completion_tokens)
             for candidate in event.get("candidates") or []:
+                # Gemini's equivalent of finish_reason=length.
+                if candidate.get("finishReason") == "MAX_TOKENS":
+                    stats.truncated = True
                 for part in (candidate.get("content") or {}).get("parts") or []:
                     text = part.get("text")
                     if text:

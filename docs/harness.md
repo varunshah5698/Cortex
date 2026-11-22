@@ -113,15 +113,64 @@ Generated pages run on a separate origin with no `/api`, under a per-run nonce.
    acts on. `HARNESS_INTENT_CHECK=0` restores structure-only verification.
 2. **Tests and evals**: pytest (no network, no provider), the offline eval suite, the
    structural verifier over the generated tree, the stack's own compiler.
+
+2.1. **Scope** (`modules/features.py`): `feature_list.json` in the run's workspace, seeded
+   from the plan before any file is written. It enforces two rules the verifier cannot:
+   one active feature at a time (`activate()` refuses a second), and `passing` reachable
+   only through `pass_feature()` with a non-empty evidence list. A model that starts three
+   things or claims a pass it cannot back is refused by the file, not asked nicely.
+
+2.2. **Clean state** (`modules/cleanstate.py`): the end-of-session checklist answered from
+   disk. An empty planned file and a feature marked passing without evidence are **errors**
+   (they are false claims); a missing progress record or handoff is a **warning** (the run
+   is usable, just less restartable). It runs after the verifier and before the goal gate,
+   because it is mechanical and the goal gate may spend a model call.
+   `HARNESS_CLEAN_STATE=0` turns it off.
+
+2.3. **Rubric** (`modules/rubric.py`, opt-in via `HARNESS_RUBRIC`): six categories scored
+   0-2 by a specialist that did not write the work, producing Accept / Revise / Block. The
+   total decides the verdict; a model's stated verdict may only be *stricter*, never more
+   generous, and a malformed answer is `unknown` rather than a pass. A `block` refuses the
+   stop the same way an unmet goal does.
+
 3. **Live**: the runner starts the real service, `probe.py` fetches the page and follows
    its assets; the preview shows install/build/start failures with their own output.
 4. **Browser**: `modules/browser.py` opens the served page in headless Chrome, reports
    console/page/request errors and clicks up to two visible buttons. It is a post-serve
    verdict, recorded as `run.browser`; it never retroactively turns a `done` run green.
 
+The **workflow graph** (`core/workflow.py`) is the control flow written down. `RunState.emit`
+observes every `phase` event at the one choke point they all pass through, so the graph sees
+the real sequence without a node knowing it exists. An edge the graph forbids is recorded on
+the event as `graph_violation` rather than raised: an unexpected edge is worth reporting and
+is not worth killing a build over. Self-edges are legal (`revising → revising` is a repair
+pass re-entering its phase), and a run's first observed phase is always legal, so a resumed
+run is not judged against an edge it never took.
+
+
 `scripts/verify.sh` is the one command: lint, format, tests, evals, types. The `Stop` hook
 runs it, so a turn cannot end on a broken build. A test or eval expectation is never edited
 to make a run pass.
+
+## Bounds on a single call
+
+The run deadline (`runtime.check_deadline`) is checked *before* a provider call, which
+stops work that has not started. It cannot stop work that has: a stream that stalls, or a
+model that will not stop thinking, used to hold the run open until the two-hour wall-clock
+limit. One review did exactly that — 9,256 reasoning events, 46 minutes, no terminal event,
+and a room that looked alive the whole time. Three separate defects produced that one
+symptom, so there are three separate bounds now:
+
+- **`HARNESS_STREAM_SECONDS`** (180s) is checked inside `llm.stream` on every chunk. A call
+  that outlives it is cut, `stats.truncated` is set, and a `stream-cut` event says the text
+  is a prefix rather than a complete answer.
+- **`HARNESS_REVIEW_THINK_CHARS`** (2,400) mutes the reviewer's reasoning past its budget.
+  It mutes the *narration*, not the stream: breaking the generator would discard the
+  findings, which arrive after the reasoning, and a model that over-thinks would lose its
+  whole review.
+- **`HARNESS_THINK_BATCH_CHARS` / `_MS`** coalesce reasoning deltas in `RunState.emit`, so
+  one review writes tens of events instead of thousands. A non-think event flushes the
+  buffer first, so the log's order still matches what happened.
 
 ## Known gaps
 
@@ -132,7 +181,11 @@ to make a run pass.
   a Playwright suite: there are no assertions about visual layout, accessibility or long
   interaction flows.
 - The planner produces files and work units, not a persisted feature list with pass/fail
-  flags. The verifier checks structure; it cannot check product intent.
+  flags. The verifier checks structure; it cannot check product intent. `modules/features.py`
+  now keeps that list — one active feature, and `passing` reachable only through recorded
+  evidence — but it is seeded from the plan, so it inherits the plan's notion of scope.
+  Nothing yet *drives* the build from the list: a feature is marked passing by a caller,
+  not by the verifier noticing it.
 - The acceptance tier (`modules/intent.py`) narrows that gap but does not close it. It
   extracts capabilities from a lexicon of vocabulary, so a request phrased in words the
   lexicon does not know yields no criteria and no findings — the sensor is silent rather
@@ -144,6 +197,37 @@ to make a run pass.
   breakpoint exists; it cannot see that the result is *ugly*, that the contrast is
   actually insufficient, or that the layout breaks at a width it never tested. Those stay
   with the browser tier and the reviewer.
-- Context resets exist through per-run workspaces, but there is no cross-session handoff
-  artefact yet: a new run starts from project memory, not from the last run's open work.
+- Context resets exist through per-run workspaces, and `modules/handoff.py` now writes a
+  `session-handoff.md` per run beside the runs root, so a new run can read the last run's
+  open work instead of starting from project memory alone. What is missing is the other
+  half: a new run does not yet *consume* it. `handoff.latest()` exists and is tested; no
+  node calls it at plan time, so the artefact is written and unread.
+- The per-call bound is a wall-clock cut, not a token budget: a model that streams slowly
+  but usefully for longer than `HARNESS_STREAM_SECONDS` is cut mid-answer. The setting is
+  the knob; a per-model value would be better than one number for every provider.
+- `tests/test_browser.py` drives real Chrome and is flaky on this machine (it skips when
+  Chrome is busy and fails when it is slow). It is not part of the loop fix and it is not
+  a regression: it fails the same way with the fix stashed.
 - A monthly subtraction pass exists (`scripts/audit.py`); it is not scheduled.
+
+## Tests may reach this machine, never the internet
+
+`tests/conftest.py` installs an autouse `no_network` fixture that fails any connection
+outside loopback. It exists because a test that forgets a provider stub does not fail
+loudly: it makes a real request, retries it five times with backoff, and asserts against
+whatever the live model answered. `test_review.py` did exactly that — twenty HTTPS
+connections to a live endpoint from a test named `without_network` — and passed or failed
+depending on the day. AGENTS.md rule 7 says tests stub the provider; the fixture enforces
+it instead of trusting it.
+
+The seam that was missed is worth naming, because it is the one a reviewer would not
+expect: `review.revise` prefers the bounded repair loop, and that loop calls
+`llm.call_tools` (native tools), **not** `llm.call`. Stubbing `llm.call` alone leaves the
+loop talking to a real endpoint. `test_agent_loop.py` already handled this correctly by
+setting `agent_loop.NATIVE_TOOLS = False` and stubbing `llm.call`; the review and
+goal-wiring tests now stub both seams explicitly.
+
+Loopback stays open on purpose: the browser tier drives headless Chrome over CDP on
+`127.0.0.1`, and the preview and cloud-runner suites talk to a local server. Blocking that
+would break them for no safety gain. `HARNESS_LIVE_FREE=1` opts the one intentional live
+test back in.

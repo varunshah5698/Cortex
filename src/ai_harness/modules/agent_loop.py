@@ -43,9 +43,9 @@ from ..config.settings import (
 )
 from ..models import Specialist
 from ..utils.validators import UnsafePath
-from . import llm, progress, prompts, protected, thrash, tool_log
+from . import code_search, llm, progress, prompts, protected, shell, skills, thrash, tool_log
 
-TOOLS = ("list", "read", "search", "edit", "write", "check", "done")
+TOOLS = ("list", "read", "search", "grep", "shell", "edit", "write", "skill", "check", "delegate", "done")
 
 # The run's own bookkeeping is not the model's file. The verifier reads `todo.md`, the
 # receipt is the audit trail, and `events.jsonl` is the transcript; a repair that can
@@ -82,14 +82,25 @@ TOOL_ALIASES = {
     "ls": "list",
     "tree": "list",
     "files": "list",
-    "grep": "search",
     "find": "search",
+    "code_search": "grep",
+    "codesearch": "grep",
+    "rg": "grep",
+    "regex": "grep",
+    "bash": "shell",
+    "sh": "shell",
+    "exec": "shell",
+    "run": "shell",
+    "terminal": "shell",
     "verify": "check",
     "validate": "check",
     "test": "check",
     "finish": "done",
     "stop": "done",
     "complete": "done",
+    "subagent": "delegate",
+    "ask": "delegate",
+    "investigate": "delegate",
 }
 
 # The same seven capabilities, described once for providers that speak native tools.
@@ -133,6 +144,41 @@ TOOL_SPECS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "grep",
+            "description": (
+                "Search the run's files with a regular expression. Use this to find a "
+                "definition, a selector or a symbol; `search` is the literal-substring version."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "A regular expression"},
+                    "path": {"type": "string", "description": "Optional path prefix"},
+                    "extension": {"type": "string", "description": "Optional file extension, e.g. 'py'"},
+                    "case_sensitive": {"type": "boolean", "description": "Default false"},
+                },
+                "required": ["pattern"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "shell",
+            "description": (
+                "Run one allow-listed command in the run workspace. Refused unless the "
+                "command is allow-listed and a sandbox is available; one command, no pipes."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"command": {"type": "string"}},
+                "required": ["command"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "edit",
             "description": "Replace one exact, unique occurrence in a file. Preferred over write.",
             "parameters": {
@@ -165,6 +211,38 @@ TOOL_SPECS: list[dict] = [
             "name": "check",
             "description": "Run the harness's deterministic checks now.",
             "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delegate",
+            "description": (
+                "Hand one question to a subagent with its own context. It reads the tree and "
+                "returns a short answer; you never see its steps. Use it when answering would "
+                "mean reading several files you do not otherwise need."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"task": {"type": "string", "description": "The one question to answer"}},
+                "required": ["task"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "skill",
+            "description": (
+                "Open a reusable procedure this run ships. Only the names are advertised; "
+                "the body is read when you ask for it. Invoke one when the situation it "
+                "names is the situation you are in."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"name": {"type": "string", "description": "The skill's name"}},
+                "required": ["name"],
+            },
         },
     },
     {
@@ -507,6 +585,32 @@ class LoopState:
                 return f"no literal match for {query!r} under {scope}"
             return "\n".join(hits)
 
+        if tool == "grep":
+            pattern = str(_first(args, ("pattern", "query", "regex", "text"), "")).strip()
+            if not pattern:
+                raise ToolError("grep needs a non-empty 'pattern'")
+            scope = str(_first(args, ("path", "file"), ".")).strip() or "."
+            extension = str(_first(args, ("extension", "file_type", "type"), "")).strip()
+            case_sensitive = _flag(args.get("case_sensitive")) or _flag(args.get("case"))
+            ignored = {progress.FILENAME, "RECEIPT.md"}
+            candidates = [
+                item
+                for item in self._tree()
+                if str(item.get("path") or "") not in ignored and not str(item.get("path") or "").startswith(".")
+            ]
+            try:
+                hits = code_search.search(
+                    candidates,
+                    self._read,
+                    pattern,
+                    scope=scope,
+                    extension=extension,
+                    case_sensitive=case_sensitive,
+                )
+            except code_search.SearchError as exc:
+                raise ToolError(str(exc)) from exc
+            return code_search.render(hits, pattern, scope)
+
         if tool == "edit":
             path = str(_first(args, ("path", "file", "target"), self.path)).strip()
             find = str(_first(args, ("find", "old", "old_string", "search"), ""))
@@ -609,6 +713,7 @@ async def repair(
                 file=path,
                 findings=state.findings,
                 state=state.render(),
+                skills=skills.catalog(run.files),
             )
             messages = [
                 {"role": "system", "content": system},
@@ -672,6 +777,37 @@ async def repair(
                     break
                 continue
 
+            if tool == "delegate":
+                # A subagent gets its own messages[] and returns one text answer. The
+                # parent's context gains the answer and nothing else, which is the whole
+                # reason to delegate: ten tool calls in a child cost one line here.
+                task = str(_first(args, ("task", "question", "query"), "")).strip()
+                if not task:
+                    state.last_observation = "ERROR: delegate needs a non-empty 'task'"
+                    state.ledger.append(f"{step}. delegate → refused: no task")
+                    continue
+                from . import subagent  # local: subagent imports this module for parse_step
+
+                report = await subagent.run_subagent(run, agent, task)
+                observation = subagent.as_context(report) or (
+                    "The subagent returned no answer. Answer the question yourself with read/search."
+                )
+                state.last_observation = observation
+                state.ledger.append(_ledger_line(step, "delegate", observation))
+                await run.emit(
+                    {
+                        "type": "tool",
+                        "tool": "agent.delegate",
+                        "args": {"task": task[:200]},
+                        "result": _clip(observation, 600),
+                        "ms": 0,
+                        "ok": report.complete,
+                        "agent": agent.id,
+                        "phase": "revising",
+                    }
+                )
+                continue
+
             if tool == "check":
                 # Check is the one tool with real async work: it emits `verify` events.
                 try:
@@ -688,6 +824,74 @@ async def repair(
                         "result": _clip(observation, 600),
                         "ms": 0,
                         "ok": True,
+                        "agent": agent.id,
+                        "phase": "revising",
+                    }
+                )
+                continue
+
+            if tool == "skill":
+                # A skill is a procedure read on demand. It arrives as an observation, not
+                # as prompt text, so a run that never invokes it never pays for it. The
+                # body goes into ACTIVE FILES so a long procedure is not re-sent each turn.
+                wanted = str(_first(args, ("name", "skill", "path"), "")).strip()
+                try:
+                    opened = skills.open_skill(run.files, wanted)
+                except LookupError as exc:
+                    observation = f"ERROR: {exc}"
+                else:
+                    state._remember(f"{skills.SKILL_DIR}/{wanted}/{skills.SKILL_FILE}", opened)
+                    observation = (
+                        f"opened the `{wanted}` skill ({_line_count(opened)} lines); "
+                        f"its procedure is in ACTIVE FILES. Follow it."
+                    )
+                state.last_observation = observation
+                state.ledger.append(_ledger_line(step, "skill", observation))
+                await run.emit(
+                    {
+                        "type": "tool",
+                        "tool": "agent.skill",
+                        "args": {"name": wanted[:80]},
+                        "result": _clip(observation, 600),
+                        "ms": 0,
+                        "ok": not observation.startswith("ERROR"),
+                        "agent": agent.id,
+                        "phase": "revising",
+                    }
+                )
+                continue
+
+            if tool == "shell":
+                # Shell is async like check: it spawns a contained process and emits a
+                # tool event. It is refused rather than approved when policy says `ask`,
+                # because a repair loop has nobody at the keyboard to approve it.
+                command = str(_first(args, ("command", "cmd", "script"), "")).strip()
+                observation = ""
+                if not command:
+                    observation = "ERROR: shell needs a non-empty 'command'"
+                else:
+                    try:
+                        async with tool_log.call(
+                            run, "agent.shell", {"command": command[:200]}, agent=agent.id, phase="revising"
+                        ) as call_log:
+                            try:
+                                observation = await shell.run(command, run.workspace, run.run_id)
+                            except Exception as exc:  # noqa: BLE001 - a refused command is an observation
+                                call_log.fail(str(exc))
+                                observation = f"ERROR: {type(exc).__name__}: {exc}"
+                            call_log.set_result(observation)
+                    except thrash.Thrash as exc:
+                        observation = f"ERROR: {exc}. Change the call instead of repeating it."
+                state.last_observation = observation
+                state.ledger.append(_ledger_line(step, "shell", observation))
+                await run.emit(
+                    {
+                        "type": "tool",
+                        "tool": "agent.shell",
+                        "args": {"command": command[:200]},
+                        "result": _clip(observation, 600),
+                        "ms": 0,
+                        "ok": not observation.startswith("ERROR"),
                         "agent": agent.id,
                         "phase": "revising",
                     }

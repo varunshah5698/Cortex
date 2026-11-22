@@ -21,7 +21,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from . import thrash
+from . import hooks, thrash
 
 # A log line is for reconstruction, not for replay: enough to identify the call and its
 # shape, never the whole page or file it touched.
@@ -76,6 +76,10 @@ class ToolCall:
 
     async def __aenter__(self) -> ToolCall:
         self._started = time.perf_counter()
+        # PreToolUse hooks sit here, at the single point every tool call passes through,
+        # so a rule covers every current and future tool with no node changed. A refusal
+        # raises before the tool body runs; the hook event is already in the transcript.
+        await hooks.pre(self.run, self.tool, self.args)
         run_id = str(getattr(self.run, "run_id", "") or "")
         if self.run is not None and run_id:
             count, first = thrash.observe(run_id, self.tool, self.args)
@@ -126,6 +130,9 @@ class ToolCall:
             if self.error:
                 event["error"] = _clip(self.error, RESULT_CHARS)
             await self.run.emit(event)
+        # PostToolUse observes the recorded outcome. It cannot change the result, and it
+        # cannot raise: a hook must never be able to fail a tool call that already ran.
+        await hooks.post(self.run, self.tool, self.args, self.ok)
         return False  # never swallow the tool's exception
 
 

@@ -257,8 +257,15 @@ export async function stopRun(id: string): Promise<void> {
   }
 }
 
-export function subscribe(id: string, onEvent: (event: HarnessEvent) => void): EventSource {
-  const source = new EventSource(`${API}/api/run/${id}/events`, { withCredentials: true });
+export function subscribe(
+  id: string,
+  onEvent: (event: HarnessEvent) => void,
+  options: { replay?: boolean } = {},
+): EventSource {
+  // `replay=0` asks the server for the bookends of a finished run instead of its whole
+  // transcript. A live run ignores it: there is no history to skip yet.
+  const query = options.replay === false ? "?replay=0" : "";
+  const source = new EventSource(`${API}/api/run/${id}/events${query}`, { withCredentials: true });
   let reported = false;
   source.onmessage = (message) => {
     reported = false;

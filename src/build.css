@@ -55,6 +55,18 @@
   font-size: 12px;
   color: var(--dim);
 }
+/* `<em>` is italic by default, so the room name wrapped onto a second line in the
+   header. It is a quiet label beside the brand, not prose. */
+.bld-brand-tag {
+  padding-left: 8px;
+  margin-left: 1px;
+  border-left: 1px solid var(--line);
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--dim);
+  white-space: nowrap;
+}
 .bld-phase {
   display: inline-flex;
   align-items: center;
@@ -2537,6 +2549,41 @@
   }
   .bld-floor-grid { grid-template-columns: 1fr; }
   .bld-writing { display: none; }
+  /* The room's two flexible panes collapsed to a sliver on a phone — 15px of office,
+     18px of floor — because the welcome card and the composer took the height first.
+     A narrow screen scrolls the room instead, and both panes keep a size worth seeing. */
+  .bld-room { overflow-y: auto; }
+  /* Two classes: the base `.office-fit { flex: 1 }` is declared later in this file. */
+  .bld-room .office-fit { flex: 0 0 200px; }
+  .bld-room .bld-floor { flex: 0 0 260px; }
+}
+
+/* Phone width. Three rows were cut off here: the header pushed its last icon past the
+   right edge, the floor tools ran out of the floor head, and the composer squeezed the
+   brief into a sliver while "Send to work" wrapped onto three lines. Each row gets its
+   own line instead of clipping. */
+@media (max-width: 640px) {
+  .bld-head { gap: 6px; padding: 0 10px; }
+  .bld-brand-tag { display: none; }
+  .bld-run { gap: 8px; }
+  /* The phase already says the run is live; the ticking clock is what loses the room. */
+  .bld-timer { display: none; }
+  /* Runtime has its own tab in the inspector below; it does not need a header icon. */
+  .bld-head-actions .bld-iconbtn[title="Runtime & metrics"] { display: none; }
+  /* An approval is the one thing that must stay visible, so it keeps the check and
+     its count in the title instead of a label that pushes the file browser off-screen. */
+  .bld-approve { padding: 0 8px; gap: 0; font-size: 0; }
+  /* The file count hangs outside its button; at this width that is the viewport edge. */
+  .bld-head-actions .bld-iconbtn i { right: 0; top: 0; }
+
+  .bld-floor-head { flex-wrap: wrap; gap: 6px; padding: 7px 8px; }
+  .bld-floor-tools { flex: 1 1 100%; }
+  .bld-floor-tools select { flex: 1; max-width: none; min-width: 0; }
+
+  .bld-compose { flex-wrap: wrap; gap: 8px; padding: 8px 10px 10px; }
+  .bld-compose textarea { order: -1; flex: 1 1 100%; min-width: 0; }
+  .bld-depth button { padding: 6px 8px; font-size: 10.5px; }
+  .bld-go { margin-left: auto; padding: 0 14px; white-space: nowrap; }
 }
 
 /* Empty-room welcome: a command deck, not a blank form. */

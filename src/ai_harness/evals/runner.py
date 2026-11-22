@@ -14,6 +14,7 @@ wording that produced it.
 from __future__ import annotations
 
 import json
+import os
 import time
 import uuid
 from datetime import datetime, timezone
@@ -38,6 +39,69 @@ from .script import Scripted
 
 RESULTS_DIR = Path(ROOT) / "evals" / "results"
 BASELINE = Path(ROOT) / "evals" / "baseline.json"
+
+# The stamp of the suite that just ran, so `save` names its aggregate after the journal
+# that recorded the same run instead of minting a second timestamp a second later.
+LAST_STAMP: str | None = None
+
+
+def journal_path(stamp: str) -> Path:
+    """The append-only record of one suite, beside the aggregate it becomes."""
+    return RESULTS_DIR / f"{stamp}.jsonl"
+
+
+def append_journal(path: Path, result: dict) -> None:
+    """One line per finished case, flushed and fsynced before the next case starts.
+
+    A suite killed at case five keeps the four that already finished. That is the whole
+    point: the aggregate written by `save` is only reachable once every case is in, so
+    without this a crash costs the entire run — and in live mode, the entire spend.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(result, sort_keys=True) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def load_journal(path: Path) -> list[dict]:
+    """Every complete line of a journal, in order.
+
+    A torn final line is the crash itself, not a result: it is dropped rather than
+    raised, because the case it belonged to never finished and has nothing to report.
+    """
+    results: list[dict] = []
+    if not path.is_file():
+        return results
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            results.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return results
+
+
+def missing_cases(results: list[dict]) -> list[str]:
+    """Golden cases this journal never recorded, in suite order.
+
+    A recovered journal is a *prefix* of a suite, not the suite. Without this the table
+    for a suite killed at case five is indistinguishable from a clean five-case run: every
+    row says `ok`, the exit status is 0, and the two cases that never ran are simply
+    absent. A partial recovery has to say so out loud.
+    """
+    recorded = {str(item.get("case")) for item in results}
+    return [case.name for case in CASES if case.name not in recorded]
+
+
+def journal_matches(results: list[dict], only: list[str] | None = None) -> list[str]:
+    """The cases a `--case` filter asked for that the journal does not hold."""
+    if not only:
+        return []
+    recorded = {str(item.get("case")) for item in results}
+    return [name for name in only if name not in recorded]
 
 
 def scripted_team() -> list[Specialist]:
@@ -188,6 +252,7 @@ async def run_case(
         "calls": calls,
         "ms": int((time.perf_counter() - started) * 1000),
         "prompt_fingerprints": prompts.fingerprints(),
+        "always_on": prompts.always_on(),
         **result,
         "build": tier,
         "judge": verdict,
@@ -232,6 +297,7 @@ def replay_regressions(only: list[str] | None = None) -> list[dict]:
                 "verification_ok": bool(report.get("ok")),
                 "errors": [f"{item['file']}: {item['detail']}" for item in report.get("issues") or []][:3],
                 "prompt_fingerprints": prompts.fingerprints(),
+                "always_on": prompts.always_on(),
                 "build": None,
                 "judge": None,
                 "replay": True,
@@ -271,18 +337,49 @@ async def run_suite(
     failures.REGRESSIONS = sandbox / "regressions.jsonl"
     memory.PATH = sandbox / "memory.md"
     logger.LOGS_ROOT = sandbox / "logs"
+
+    # The journal is written as each case lands, not after the last one. A suite that is
+    # interrupted keeps everything it already paid for, and `--from-journal` can re-read
+    # those results without asking a provider anything twice.
+    global LAST_STAMP
+    LAST_STAMP = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    journal = journal_path(LAST_STAMP)
+
+    results: list[dict] = []
     try:
-        results = [await run_case(case, live=live, build=build, judge=judge, team=team) for case in cases]
+        for case in cases:
+            result = await run_case(case, live=live, build=build, judge=judge, team=team)
+            results.append(result)
+            append_journal(journal, result)
+        for replay in replays:
+            results.append(replay)
+            append_journal(journal, replay)
     finally:
         state_mod.RUNS_ROOT = original_root
         failures.LOG, failures.REGRESSIONS, memory.PATH = original_pages
         logger.LOGS_ROOT = original_logs
-    return results + replays
+    return results
+
+
+def latest_journal() -> str | None:
+    """The stamp of the most recent suite that wrote a journal, or None.
+
+    Lives here rather than in the CLI so the path is resolved against this module's
+    `RESULTS_DIR` at call time: a caller that redirects the directory (a test, a sandbox)
+    gets its own journals instead of an import-time copy of the real one.
+    """
+    found = sorted(path.stem for path in RESULTS_DIR.glob("*.jsonl"))
+    return found[-1] if found else None
 
 
 def save(results: list[dict]) -> Path:
+    """The aggregate for a suite, named after the journal that recorded it.
+
+    The stamp comes from `run_suite` (or from the journal being re-read), so the aggregate
+    and its journal share one name and a recovered suite does not mint a second one.
+    """
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = LAST_STAMP or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     path = RESULTS_DIR / f"{stamp}.json"
     path.write_text(json.dumps({"created": stamp, "results": results}, indent=2), encoding="utf-8")
     return path

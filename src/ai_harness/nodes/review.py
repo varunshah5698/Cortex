@@ -10,7 +10,7 @@ from ..agents import executor, reviewer
 from ..config.settings import AGENT_LOOP, AGENT_STEPS
 from ..core.state import RunState
 from ..models import Specialist, WorkUnit
-from ..modules import agent_loop, context, intent, llm, memory, progress, prompts, thrash
+from ..modules import agent_loop, context, goal, intent, llm, memory, progress, prompts, thrash
 from ..nodes import execution, verify
 
 
@@ -489,6 +489,7 @@ async def revise(
                         objective=unit.objective,
                         prompt=run.prompt,
                         acceptance=intent.contract(getattr(run, "acceptance", None) or []),
+                        goal=prompts.GOAL_CONTRACT.format(goal=goal.read(run)),
                         reasoning=deliberation or answered,
                         critique=findings[:700],
                         design=prompts.DESIGN_CONTRACT,

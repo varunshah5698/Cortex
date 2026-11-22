@@ -10,12 +10,21 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..config.settings import EVENT_MEMORY_LIMIT, MAX_RUN_CALLS, MAX_RUN_TOKENS, MAX_RUN_USD, RUNS_ROOT
+from ..config.settings import (
+    EVENT_MEMORY_LIMIT,
+    MAX_RUN_CALLS,
+    MAX_RUN_TOKENS,
+    MAX_RUN_USD,
+    RUNS_ROOT,
+    THINK_BATCH_CHARS,
+    THINK_BATCH_MS,
+)
 from ..models import Specialist, WorkUnit
 from ..modules import prompts
 from ..modules.budget import Budget
 from ..modules.llm import Usage
 from ..tools.file_manager import FileManager
+from . import workflow
 
 EVENT_LOG = "events.jsonl"
 TERMINAL_EVENTS = ("done", "error")
@@ -61,6 +70,12 @@ class RunState:
     # record of what the person actually asked for, so it lives on the run and every
     # verification pass reads it — a resumed run keeps judging the same request.
     acceptance: list[dict] = field(default_factory=list)
+    # The goal gate's verdict (`modules/goal.py`): what the run said finished looks like,
+    # and whether an independent check agreed. `done` reports it beside the verification
+    # report, because "the tree holds together" and "this is what was asked for" are two
+    # different answers and the operator needs both.
+    goal: dict | None = None
+    goal_text: str = ""
     # The verdict has two halves and `done` reports both. Verification read the files;
     # nothing installed or compiled them unless a preview did, so `previewed` stays False
     # on a run that was only verified, and `build` is None until something really built.
@@ -70,6 +85,19 @@ class RunState:
     # a page can be structurally verified and still fail here.
     browser: dict | None = None
     cache_hits: int = 0
+    # The workflow graph's view of this run: the current phase and the edges taken. Kept on
+    # the run so a violation can be reported against a real sequence, and so a resumed run
+    # continues from where its disk state left it rather than from `idle`.
+    phase: str = "idle"
+    phase_history: list[dict] = field(default_factory=list)
+    # Whether any phase has been observed yet. A resumed run's first phase is not an edge
+    # the graph can judge, so it must be distinguishable from a run genuinely sitting at
+    # `idle` and then jumping into the middle of the pipeline.
+    phase_seen: bool = False
+    # How the run ended, as one of the names in `modules/exit.py`. `done` is a boolean and
+    # a boolean cannot say whether a run stopped for money, time, a provider or a person;
+    # this is the field that can, and it is set on every termination path.
+    exit_status: str = ""
     # False when rebuilding from disk: an existing workspace must never be wiped.
     fresh: bool = True
 
@@ -81,9 +109,63 @@ class RunState:
         self.fm = FileManager(self.workspace)
         self.event_path = self.workspace / EVENT_LOG
         self._log: object | None = None
+        # Per-agent reasoning buffer for `_buffer_think`. Keyed by agent so two agents
+        # streaming at once cannot interleave their deltas into one unreadable event.
+        self._think: dict[str, dict] = {}
 
     async def emit(self, event: dict) -> None:
+        # Reasoning arrives one token at a time and used to become one event per token:
+        # a single review wrote 8,000 `think` events and pushed 8,000 SSE messages, which
+        # is a transcript nobody can read and a UI that spends its time appending. Deltas
+        # are coalesced here, at the one place every event passes through, so no node has
+        # to know about batching. A non-think event flushes the buffer first, so ordering
+        # in the log still matches what happened.
+        if event.get("type") == "think":
+            await self._buffer_think(event)
+            return
+        await self._flush_think()
+        await self._deliver(event)
+
+    async def _buffer_think(self, event: dict) -> None:
+        """Hold reasoning deltas until they are worth an event."""
+        agent = str(event.get("agent") or "")
+        delta = str(event.get("delta") or "")
+        if not delta:
+            return
+        now = time.monotonic()
+        pending = self._think.get(agent)
+        if pending is None:
+            self._think[agent] = {"text": delta, "since": now}
+            return
+        pending["text"] += delta
+        # Both bounds are optional: 0 disables one. Without the `> 0` guard a batch window
+        # of 0 made the time test always true, so every second delta became an event and
+        # the batching did nothing.
+        full = THINK_BATCH_CHARS > 0 and len(pending["text"]) >= THINK_BATCH_CHARS
+        stale = THINK_BATCH_MS > 0 and (now - pending["since"]) * 1000 >= THINK_BATCH_MS
+        if full or stale:
+            await self._flush_think(agent)
+
+    async def _flush_think(self, agent: str | None = None) -> None:
+        """Emit whatever reasoning is buffered, for one agent or for all of them."""
+        targets = [agent] if agent is not None else list(self._think)
+        for key in targets:
+            pending = self._think.pop(key, None)
+            if not pending or not pending["text"]:
+                continue
+            await self._deliver({"type": "think", "agent": key, "delta": pending["text"]})
+
+    async def _deliver(self, event: dict) -> None:
+        """Record and publish one event. The body `emit` used to be."""
         self.events.append(event)
+        # The workflow graph sees every phase change here, at the one choke point all of
+        # them pass through, so no node has to know the graph exists. A violation is
+        # recorded as an event rather than raised: an unexpected edge is worth reporting
+        # and is not worth killing a build over.
+        if event.get("type") == "phase":
+            violation = workflow.observe(self, str(event.get("phase") or ""))
+            if violation:
+                event["graph_violation"] = violation
         # The log on disk is the full history; memory keeps only a window. Without this
         # cap a long run grew the resident list without bound while EVENT_MEMORY_LIMIT
         # sat unread in settings.
@@ -92,12 +174,17 @@ class RunState:
         self._record(event)
         if event.get("type") in TERMINAL_EVENTS:
             self.done = event.get("type") == "done"
+            self._think.clear()
             self.close_log()
         for queue in list(self.subscribers):
             try:
                 queue.put_nowait(event)
             except asyncio.QueueFull:
                 self.subscribers.remove(queue)
+
+    async def flush(self) -> None:
+        """Publish any buffered reasoning. A terminal event already does this."""
+        await self._flush_think()
 
     def _record(self, event: dict) -> None:
         """Append the event to the run's log, so a restart cannot erase the history."""
@@ -177,6 +264,7 @@ class RunState:
             "kind": self.kind,
             "created": self.created,
             "done": self.done,
+            "exit_status": self.exit_status,
             "answer": self.answer,
             "files": len(self.files),
             "totals": totals.as_dict(),
@@ -184,6 +272,7 @@ class RunState:
             "budget": self.budget.as_dict(),
             "cache": {"run_hits": self.cache_hits},  # process-wide counters live in /api/health
             "verification": self.verification,
+            "goal": self.goal,
             "build": self.build,
             "previewed": self.previewed,
             "browser": self.browser,

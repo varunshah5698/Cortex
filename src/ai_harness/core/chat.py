@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import re
 
-from ..config.settings import REASONING_WORDS
+from ..config.settings import CONTEXT_WINDOW, REASONING_WORDS
 from ..core.state import RunState, now_iso
 from ..models import Specialist
-from ..modules import llm, prompts, runtime
+from ..modules import compact, llm, prompts, runtime
 from ..modules.budget import BudgetExceeded
 from ..modules.guard import ReflectionGuard, strip_reflection
 
@@ -43,6 +43,21 @@ def last_question(turns: list[dict[str, str]]) -> str:
         if turn["role"] == "user":
             return turn["content"][:1200]
     return ""
+
+
+async def fit(run: RunState, messages: list[dict], window: int = CONTEXT_WINDOW) -> list[dict]:
+    """Compact `messages` to fit the window, and say so when it had to.
+
+    A chat is the one place in this harness whose context grows without bound: every
+    turn is appended and nothing prunes it, so a long conversation eventually reaches a
+    provider 400 that reads like a mystery. Compaction is the harness's answer, and it is
+    reported as an event rather than done quietly — a person whose earlier turns were
+    summarised should know that is why the answer forgot something.
+    """
+    result = compact.compact(messages, window)
+    if result.changed:
+        await run.emit({"type": "compact", **result.public()})
+    return result.messages
 
 
 # How much reasoning a message may spend before it answers. Each step is a model call:
@@ -137,6 +152,12 @@ async def run_chat(
 
     depth = depth if depth in DEPTHS else DEFAULT_DEPTH
     await run.emit({"type": "start", "prompt": run.prompt, "kind": "chat", "created": run.created})
+
+    # Fit the conversation to the window once, before any pass spends a call on it. The
+    # reasoning pass is the largest request in a chat (system prompt plus every turn), so
+    # compacting here covers the answer and self-check passes too — they all start from
+    # `turns`.
+    turns = await fit(run, turns)
 
     if depth == "off":
         # One call, no reasoning pass: the person asked for the answer, not the thinking.

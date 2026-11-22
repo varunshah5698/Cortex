@@ -351,6 +351,87 @@ def test_preview_probe_without_a_service_is_an_honest_failure():
     assert report["issues"][0]["code"] == "not_serving"
 
 
+def _preview_run(tmp_path, monkeypatch):
+    """A registered run whose service answers, with its workspace in tmp_path."""
+    import ai_harness.core.state as state_mod
+    from ai_harness import main as app_mod
+    from ai_harness.core.state import RunState
+    from ai_harness.models import Specialist
+
+    monkeypatch.setattr(state_mod, "RUNS_ROOT", tmp_path)
+    run = RunState(
+        run_id="preview1",
+        prompt="build a page",
+        specialists=[Specialist(id="a1", name="A", role="planner", model="m")],
+        depth="quick",
+    )
+    app_mod.harness.runs[run.run_id] = run
+    monkeypatch.setattr(
+        app_mod.runner, "get", lambda _run_id: SimpleNamespace(url="http://127.0.0.1:8123/", state="ready")
+    )
+    return app_mod, run
+
+
+def test_preview_check_drives_chrome_not_the_http_probe(tmp_path, monkeypatch):
+    """The on-demand preview check is the browser sensor: a button that does nothing
+    passes the probe and fails Chrome, so Chrome has to be the one that answers."""
+    app_mod, run = _preview_run(tmp_path, monkeypatch)
+    seen: list[tuple[str, bool]] = []
+
+    async def fake_browser(url, interact=None):
+        seen.append((url, bool(interact)))
+        return {
+            "ok": False,
+            "skipped": False,
+            "stage": "browser",
+            "errors": 1,
+            "warnings": 0,
+            "checked": 1,
+            "issues": [{"file": url, "level": "error", "code": "console_error", "detail": "boom"}],
+        }
+
+    monkeypatch.setattr(app_mod.browser, "check", fake_browser)
+    try:
+        report = asyncio.run(app_mod.preview_check("preview1"))
+    finally:
+        app_mod.harness.runs.pop(run.run_id, None)
+
+    assert report["stage"] == "browser"
+    assert seen == [("http://127.0.0.1:8123/", True)]
+    assert any(event["type"] == "verify" and event.get("stage") == "browser" for event in run.events)
+
+
+def test_preview_check_falls_back_to_the_probe_without_chrome(tmp_path, monkeypatch):
+    """A machine with no Chrome still gets a live check, and the report says which sensor
+    answered instead of pretending the page was driven."""
+    app_mod, run = _preview_run(tmp_path, monkeypatch)
+
+    async def skipped_browser(url, interact=None):
+        return {
+            "ok": True,
+            "skipped": True,
+            "stage": "browser",
+            "errors": 0,
+            "warnings": 0,
+            "checked": 0,
+            "issues": [],
+            "note": "Chrome is not installed",
+        }
+
+    async def fake_probe(url):
+        return {"ok": True, "stage": "preview", "errors": 0, "warnings": 0, "checked": 1, "issues": []}
+
+    monkeypatch.setattr(app_mod.browser, "check", skipped_browser)
+    monkeypatch.setattr(app_mod.probe, "check", fake_probe)
+    try:
+        report = asyncio.run(app_mod.preview_check("preview1"))
+    finally:
+        app_mod.harness.runs.pop(run.run_id, None)
+
+    assert report["stage"] == "preview"
+    assert "Chrome is not installed" in report["note"]
+
+
 def test_no_fallback_when_it_would_be_the_same_model(monkeypatch):
     from ai_harness.models import Specialist
 

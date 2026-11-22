@@ -6,6 +6,10 @@ this can gate a change without a human reading the table.
 
 A `--judge` score is never part of that: it is printed and saved, and the deterministic
 checks stay the only gate (see `evals/judge.py`).
+
+`--from-journal` re-reads a suite that already ran instead of running one. A journal left
+by an interrupted suite is a prefix, so the cases it never recorded are named and the exit
+status is 1: a partial recovery must not read as a clean run.
 """
 
 from __future__ import annotations
@@ -15,7 +19,18 @@ import asyncio
 import json
 import sys
 
-from .runner import load_baseline, run_suite, save, write_baseline
+from . import runner
+from .runner import (
+    journal_matches,
+    journal_path,
+    latest_journal,
+    load_baseline,
+    load_journal,
+    missing_cases,
+    run_suite,
+    save,
+    write_baseline,
+)
 
 
 def _judge_cell(judged: dict | None) -> str:
@@ -70,13 +85,47 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="also grade each live run with a rubric call (advisory: never changes the exit status)",
     )
+    parser.add_argument(
+        "--from-journal",
+        metavar="STAMP",
+        help="re-read a suite's journal (or 'latest') instead of running it: no provider, no spend",
+    )
     args = parser.parse_args(argv)
     if args.judge and not args.live:
         # The judge sends the request to a real model: it is part of the live tier, and it
         # must not quietly spend credits from a command that looked free.
         parser.error("--judge needs --live: it asks a configured model to grade the run, and spends credits")
+    if args.from_journal and (args.live or args.build or args.judge):
+        parser.error("--from-journal re-reads results already recorded; it cannot also run, build or judge")
 
-    results = asyncio.run(run_suite(live=args.live, only=args.case, build=args.build, judge=args.judge))
+    if args.from_journal:
+        # A suite that was interrupted left its finished cases on disk. Reading them back
+        # is the whole reason the journal exists: the aggregate, the table and the
+        # baseline comparison all work again, and nothing is asked of a provider.
+        stamp = args.from_journal
+        if stamp == "latest":
+            found = latest_journal()
+            if not found:
+                parser.error("no journal to read: no suite has written one yet")
+            stamp = found
+        results = load_journal(journal_path(stamp))
+        if not results:
+            parser.error(f"journal {stamp} holds no complete case")
+        # A recovered journal is a prefix of a suite, not the suite. Say which cases never
+        # ran, and fail: a table of five green rows is otherwise indistinguishable from a
+        # clean run, which is exactly the false confidence the journal exists to prevent.
+        absent = journal_matches(results, args.case) or missing_cases(results)
+        if absent:
+            print(
+                f"partial: journal {stamp} never recorded {len(absent)} case(s): {', '.join(absent)}",
+                file=sys.stderr,
+            )
+            print("partial: re-run the suite to fill the gap; this journal cannot gate a change", file=sys.stderr)
+        # Name the rebuilt aggregate after the journal it came from, not after now.
+        runner.LAST_STAMP = stamp
+    else:
+        absent = []
+        results = asyncio.run(run_suite(live=args.live, only=args.case, build=args.build, judge=args.judge))
     path = save(results)
 
     if args.json:
@@ -104,6 +153,9 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
     print(f"results: {path}", file=sys.stderr)
+
+    if absent:
+        failed.extend(absent)
 
     if args.update_baseline:
         print(f"baseline: {write_baseline(results)}", file=sys.stderr)

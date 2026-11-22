@@ -34,7 +34,7 @@ import posixpath
 import re
 
 from ..core.state import RunState
-from ..modules import design, intent, toolchain
+from ..modules import design, intent, skills, toolchain
 
 ID_IN_HTML = re.compile(r"""\bid\s*=\s*["']([^"']+)["']""")
 REF_IN_HTML = re.compile(r"""\b(?:href|src)\s*=\s*["']([^"']+)["']""")
@@ -43,6 +43,9 @@ QUERY_ID = re.compile(r"""querySelector(?:All)?\(\s*["']#([\w-]+)["']""")
 SCRIPT_TAG = re.compile(r"<script\b", re.I)
 STYLESHEET_LINK = re.compile(r"""<link\b[^>]*\brel\s*=\s*["']?stylesheet""", re.I)
 PLACEHOLDERS = ("todo:", "fixme", "your code here", "lorem ipsum")
+# The standing instruction files a skill must be named in to be invocable. A skill the
+# model never hears about is a procedure that can never load.
+ALWAYS_ON_FILES = ("AGENTS.md", "CLAUDE.md", "systemprompt.md", "guardrails.md", "README.md")
 EXTERNAL = ("http://", "https://", "//", "data:", "mailto:", "#")
 # A file marker that leaked into the file itself. `>>>` alone is the tail of
 # `<<<FILE path>>>`; JS's `a >>> b` is not a whole line and is untouched.
@@ -441,7 +444,35 @@ def check(files: dict[str, dict], declared: list[str] | None = None, criteria: l
         for item in intent.check(files, criteria):
             _issue(issues, item["level"], item["code"], item["file"], item["detail"])
 
+    # Tier 1.7: a skill the run ships but never names is a procedure nothing can invoke.
+    # The failure is silent at load — the file is simply never opened — so it belongs here,
+    # where a model cannot ignore it, rather than in prompt wording.
+    for problem in skills.validate(_contents(files), _always_on(files)):
+        _issue(issues, "error", "skill", _skill_file(problem, files), problem)
+
     return _report(issues, len(declared))
+
+
+def _contents(files: dict[str, dict]) -> dict[str, str]:
+    """The file map as path -> text, which is what the skill checks read."""
+    return {path: str((meta or {}).get("content") or "") for path, meta in files.items()}
+
+
+def _always_on(files: dict[str, dict]) -> str:
+    """The text a skill must be named in: the run's standing prompt files, if any."""
+    return "\n".join(
+        str((meta or {}).get("content") or "")
+        for path, meta in files.items()
+        if path.rsplit("/", 1)[-1] in ALWAYS_ON_FILES
+    )
+
+
+def _skill_file(problem: str, files: dict[str, dict]) -> str:
+    """The skill file a problem is about, so the finding points at something openable."""
+    for path in files:
+        if path in problem:
+            return path
+    return next((path for path in files if path.endswith("/SKILL.md")), "skills")
 
 
 def _report(issues: list[dict], checked: int) -> dict:

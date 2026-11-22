@@ -93,13 +93,34 @@ def test_replay_zero_accepts_the_other_false_spellings(client_and_run):
 
 
 def test_a_live_run_still_streams_every_event(client_and_run):
-    """An unfinished run has no history to skip: the flag must not truncate live work."""
+    """An unfinished run has no history to skip: the flag must not truncate live work.
+
+    This one reads the route's own body iterator instead of going through TestClient.
+    httpx's ASGI transport collects the whole body before returning, and a live stream
+    never finishes, so a `client.get` here waits forever instead of failing. Reading the
+    first snapshot and closing is the honest way to hold the same assertion.
+    """
+    import asyncio
+
+    from ai_harness.main import run_events
+
     client, run = client_and_run
     run.done = False
 
-    response = client.get(f"/api/run/{run.run_id}/events?replay=0", timeout=5)
+    response = asyncio.run(run_events(run.run_id, replay=False))
+
+    async def first_snapshot() -> list[str]:
+        chunks: list[str] = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk if isinstance(chunk, str) else chunk.decode("utf-8"))
+            if len(chunks) == len(run.events):
+                break
+        return chunks
+
+    chunks = asyncio.run(first_snapshot())
 
     # The generator blocks waiting for more events, so the body is what it flushed first:
     # every event so far, not just the verdict.
     assert response.status_code == 200
-    assert len(_frames(response.text)) == len(run.events)
+    assert len(_frames("".join(chunks))) == len(run.events)
+    assert _frames("".join(chunks))[-1]["type"] == "done"

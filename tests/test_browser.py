@@ -7,6 +7,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -20,6 +21,58 @@ from ai_harness.modules import browser  # noqa: E402
 pytestmark = pytest.mark.skipif(
     not Path(CHROME_PATH).is_file() or shutil.which(NODE_BIN) is None,
     reason="headless Chrome or node is not installed",
+)
+
+
+def _chrome_launches() -> bool:
+    """True when headless Chrome actually starts here, not merely when it is installed.
+
+    A Chrome binary that exists but segfaults on `--headless=new` (a broken install, a
+    hardened runtime, a machine that refuses the sandbox) makes every browser test fail
+    for a reason that has nothing to do with the code under test. Probe it once and skip
+    the module instead of reporting a page defect the page never had.
+    """
+    profile = tempfile.mkdtemp(prefix="chrome-probe-")
+    try:
+        process = subprocess.Popen(
+            [
+                CHROME_PATH,
+                "--headless=new",
+                "--disable-gpu",
+                "--no-first-run",
+                "--no-default-browser-check",
+                f"--user-data-dir={profile}",
+                "--remote-debugging-port=0",
+                "about:blank",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        port_file = Path(profile) / "DevToolsActivePort"
+        # A cold Chrome on macOS writes DevToolsActivePort after ~5s (measured here), so a
+        # 60-try/6s budget sat right on the boundary and skipped the whole module on a
+        # machine where Chrome works. 200 tries (20s) is generous and still bounded.
+        for _ in range(200):
+            if port_file.is_file():
+                return True
+            if process.poll() is not None:
+                return False
+            time.sleep(0.1)
+        return False
+    finally:
+        try:
+            process.kill()
+            process.wait(timeout=5)
+        except Exception:  # noqa: BLE001 - a probe cleanup must never fail the module
+            pass
+        shutil.rmtree(profile, ignore_errors=True)
+
+
+CHROME_RUNS = _chrome_launches() if Path(CHROME_PATH).is_file() else False
+
+pytestmark = pytest.mark.skipif(
+    not CHROME_RUNS or shutil.which(NODE_BIN) is None,
+    reason="headless Chrome does not launch on this machine, or node is missing",
 )
 
 

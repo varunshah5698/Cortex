@@ -71,24 +71,49 @@ async def _fake_compose(agent: Specialist, messages: list[dict], **kwargs):  # n
     return files, Usage(prompt_tokens=20, completion_tokens=9, ms=18, calls=1)
 
 
-def test_review_revises_without_network(tmp_path: Path) -> None:
+async def _fake_call_tools(agent: Specialist, messages: list[dict], tools: list[dict], **kwargs):  # noqa: ANN001
+    """The native-tool seam the repair loop uses: read the file, then finish.
+
+    `done` is refused while the check fails, so the loop needs a real edit to succeed. It
+    reads, replaces the bare `<html>` with the composed page, and then finishes — which is
+    what a working model would do, without a provider.
+    """
+    system = str((messages[0] if messages else {}).get("content", ""))
+    if "Current state:" not in system:
+        return {"tool": "read", "args": {"path": "index.html"}}, "", Usage(calls=1)
+    return (
+        {
+            "tool": "write",
+            "args": {"path": "index.html", "content": '<html><body><h1 class="title">Coffee</h1></body></html>\n'},
+        },
+        "",
+        Usage(calls=1),
+    )
+
+
+def test_review_revises_without_network(tmp_path: Path, monkeypatch) -> None:
     author = Specialist(id="vega", name="Vega", role="frontend", model="stub")
     checker = Specialist(id="lyra", name="Lyra", role="reviewer", model="stub")
     unit = WorkUnit(id="u1", title="Page shell", role="frontend", file="index.html", objective="hero", agent="vega")
     run = FakeRun([author, checker], {"index.html": {"agent": "vega", "content": "<html>", "done": True}})
 
-    original_call = review.llm.call
-    original_stream = review.llm.stream
-    original_compose = executor.compose
-    review.llm.call = _fake_call
-    review.llm.stream = _fake_stream
-    executor.compose = _fake_compose
-    try:
-        findings = asyncio.run(review.run(run, checker, [unit]))
-    finally:
-        review.llm.call = original_call
-        review.llm.stream = original_stream
-        executor.compose = original_compose
+    # This test guards the *rewrite* hand-off — the reviewer's findings reach the author,
+    # the author regenerates the file, and the run records a `revised` file_end. The
+    # bounded repair loop is the other path (it emits `repaired`, and `test_agent_loop.py`
+    # covers it directly), so it is switched off here to keep this test about one thing.
+    #
+    # The loop is also where this test used to leak: it reaches the provider through
+    # `llm.call_tools`, not `llm.call`, so stubbing only `call` sent a test named
+    # `without_network` to a live endpoint for twenty HTTPS connections. Both seams are
+    # stubbed below regardless, and `conftest.py` now fails any test that reaches the
+    # internet at all.
+    monkeypatch.setattr(review, "AGENT_LOOP", False)
+    monkeypatch.setattr(review.llm, "call", _fake_call)
+    monkeypatch.setattr(review.llm, "stream", _fake_stream)
+    monkeypatch.setattr(review.llm, "call_tools", _fake_call_tools)
+    monkeypatch.setattr(executor, "compose", _fake_compose)
+
+    findings = asyncio.run(review.run(run, checker, [unit]))
 
     # The reviewer's findings lead; the harness may append its own deterministic facts
     # (the pre-review file here is a bare `<html>` fragment, which the design sensor

@@ -58,9 +58,13 @@ function cleanup() {
     /* already closed */
   }
   try {
-    chrome?.kill("SIGKILL");
+    if (chrome?.pid) process.kill(-chrome.pid, "SIGKILL");
   } catch {
-    /* already gone */
+    try {
+      chrome?.kill("SIGKILL");
+    } catch {
+      /* already gone */
+    }
   }
   try {
     rmSync(PROFILE, { recursive: true, force: true });
@@ -105,7 +109,11 @@ function visibleExpression(selector) {
 
 async function waitForChrome() {
   const portFile = path.join(PROFILE, "DevToolsActivePort");
-  for (let i = 0; i < 80; i++) {
+  // A cold Chrome on macOS writes DevToolsActivePort after ~5s (measured), and a machine
+  // already busy with other headless Chromes is slower still. 80 tries (8s) was tight
+  // enough that the check reported "Chrome did not expose a debugging port" on a healthy
+  // browser. 250 tries (25s) leaves room without outliving the caller's own timeout.
+  for (let i = 0; i < 250; i++) {
     try {
       const lines = readFileSync(portFile, "utf8").trim().split("\n");
       if (lines[0]) return Number(lines[0]);
@@ -136,7 +144,10 @@ async function main() {
       "--remote-debugging-port=0",
       "about:blank",
     ],
-    { stdio: ["ignore", "ignore", "pipe"] },
+    // `detached` puts Chrome in its own process group so cleanup can kill the helpers
+    // too. Killing only the parent leaked a GPU/renderer process per failed check, and
+    // the accumulated load is what made later launches miss the port-file deadline.
+    { stdio: ["ignore", "ignore", "pipe"], detached: true },
   );
   let stderr = "";
   chrome.stderr?.on("data", (chunk) => {
@@ -347,7 +358,10 @@ async function main() {
 
 main()
   .catch((error) => {
-    emit({ ok: false, skipped: false, error: String(error?.stack || error).slice(0, 1200) });
+    // A launch or CDP failure is not a page defect. Reporting it with `skipped: false`
+    // made `browser.py` read it as a real finding — a healthy page was told it had zero
+    // buttons because Chrome never opened it. It is a skip, and the note says why.
+    emit({ ok: false, skipped: true, error: String(error?.stack || error).slice(0, 1200) });
     process.exitCode = 1;
   })
   .finally(async () => {

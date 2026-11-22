@@ -105,6 +105,22 @@ REASONING_WORDS = _int("HARNESS_REASONING_WORDS", 700)
 # the room looks alive. The cap is a hard stop on the visible reasoning stream; the
 # compose pass then gets its turn.
 MAX_REASONING_CHARS = max(1000, _int("HARNESS_MAX_REASONING_CHARS", REASONING_WORDS * 6))
+# The reviewer streams its reading of the tree, and that stream was unbounded: a local
+# model that keeps thinking produced 7,000+ deltas and held one review call open for
+# three quarters of an hour while the room looked alive. The reasoning pass already has
+# a budget (`MAX_REASONING_CHARS`); the review pass gets its own, because it is a
+# different job and a shorter one.
+REVIEW_THINK_CHARS = max(600, _int("HARNESS_REVIEW_THINK_CHARS", 2400))
+# A single provider call may not outlive this, whatever the provider is doing. The run
+# deadline is checked before a call; this is checked *during* one, so a stream that
+# stalls or a model that will not stop is cut instead of holding the run open until the
+# wall-clock limit two hours later.
+STREAM_SECONDS = max(0.0, _float("HARNESS_STREAM_SECONDS", 180.0))
+# Reasoning deltas are emitted in batches rather than one event per token. A 4-character
+# delta per event wrote 8,000 events and pushed 8,000 SSE messages for one review; the
+# transcript is for reconstruction, not for replaying the tokenizer.
+THINK_BATCH_CHARS = max(0, _int("HARNESS_THINK_BATCH_CHARS", 120))
+THINK_BATCH_MS = max(0, _int("HARNESS_THINK_BATCH_MS", 120))
 # A planner that has not produced a plan by now is not going to. The node falls back to
 # the stack inferred from the request and starts the room writing, rather than leaving
 # the UI at "planning" forever.
@@ -152,12 +168,85 @@ AGENT_ACTIVE_FILES = max(1, _int("HARNESS_AGENT_ACTIVE_FILES", 2))
 # rest of the run when a provider answers 4xx to `tools`.
 NATIVE_TOOLS = _bool("HARNESS_NATIVE_TOOLS", True)
 
+# The shell tool is the workshop's `bash`, contained: one allow-listed command, no shell
+# metacharacters, judged by `permissions.decision`, wrapped by `sandbox.prefix`, and off
+# unless an operator turns it on. It also requires a real sandbox — where there is none it
+# reports itself unavailable rather than running with the owner's access.
+AGENT_SHELL = _bool("HARNESS_AGENT_SHELL", False)
+
+# ---------- model roulette: vary the model behind a role, per call ----------
+# Off by default: a run that silently changes models is a run whose cost and behaviour
+# cannot be compared to the last one. On, it draws from the roster at every call, which
+# is the research setting — alternating between two strong models beats either alone
+# because they fail differently. `HARNESS_ROULETTE_MODELS` is a comma-separated list of
+# model names (not specialist ids); a name with no configured key is ignored.
+ROULETTE_ENABLED = _bool("HARNESS_ROULETTE", False)
+ROULETTE_MODELS = [name.strip() for name in os.getenv("HARNESS_ROULETTE_MODELS", "").split(",") if name.strip()]
+# A seed makes the draw sequence reproducible, so a surprising run can be replayed. Unset
+# means the process RNG, which is what an experiment wants.
+ROULETTE_SEED = _int("HARNESS_ROULETTE_SEED", 0) or None
+
+# A subagent gets its own message list and a bounded number of steps. The bound is
+# smaller than the repair loop's: a delegate that needs ten tool calls to answer one
+# question is usually reading the wrong thing, and the parent is paying for every step.
+SUBAGENT_STEPS = max(1, _int("HARNESS_SUBAGENT_STEPS", 6))
+
 # The acceptance layer: the request's named capabilities become a checklist the harness
 # checks the tree against. This is the only sensor that asks whether the build is the
 # thing that was asked for, and it is what keeps a weak model from shipping a tidy page
 # with none of the requested features. Off only for an operator who wants structure-only
 # verification.
 INTENT_CHECK = _bool("HARNESS_INTENT_CHECK", True)
+
+# ---------- hooks: declarative extension points around every tool call ----------
+# Rules live in `harness.hooks.json` and are matched against the tool name and an
+# optional path glob. They are declarative on purpose: a hook that could run a shell
+# command would be model-reachable code execution outside `modules/sandbox.py`. A
+# missing or malformed file is inert, so an unconfigured harness is unchanged.
+HOOKS_ENABLED = _bool("HARNESS_HOOKS", True)
+HOOKS_FILE = Path(os.getenv("HARNESS_HOOKS_FILE", ROOT / "harness.hooks.json"))
+
+# ---------- context compaction: make room instead of overflowing ----------
+# A long repair loop or a resumed run can outgrow the window. Compaction is tiered and
+# cheap-first: clip tool results, then drop the oldest turns, then summarise. The
+# summary is a model call, so it is the last resort and it is bounded.
+COMPACT_ENABLED = _bool("HARNESS_COMPACT", True)
+# The share of the window a request may occupy before compaction runs.
+COMPACT_AT = min(0.95, max(0.3, _float("HARNESS_COMPACT_AT", 0.75)))
+# Tool results are the first thing to shrink: they are the bulk and the least precious.
+COMPACT_TOOL_CHARS = max(200, _int("HARNESS_COMPACT_TOOL_CHARS", 1200))
+# How many of the newest turns are never touched, whatever their size.
+COMPACT_KEEP_TURNS = max(1, _int("HARNESS_COMPACT_KEEP_TURNS", 4))
+# The summary call is capped so a compaction can never cost more than the work it saves.
+COMPACT_SUMMARY_TOKENS = max(120, _int("HARNESS_COMPACT_SUMMARY_TOKENS", 400))
+# The window compaction measures against. A roster row does not carry one — providers do
+# not agree on a field for it, and a wrong guess is worse than a stated default — so this
+# is the number the harness assumes, and an operator with a smaller model lowers it.
+CONTEXT_WINDOW = max(2000, _int("HARNESS_CONTEXT_WINDOW", 128000))
+
+# ---------- the goal gate: an independent check decides when a run may stop ----------
+# `done` is already gated on the verifier. This is the second gate for a *goal*: the run
+# states what finished looks like, and a separate evaluation says whether that is true.
+# It exists because a model that is tired of a task reports success; the gate is the
+# harness's answer, and it can send the run back for another pass.
+GOAL_ENABLED = _bool("HARNESS_GOAL_GATE", True)
+# How many times the gate may send a run back before it accepts the stop and records why.
+GOAL_ROUNDS = max(0, _int("HARNESS_GOAL_ROUNDS", 1))
+# A goal the harness can check itself is checked by the verifier, not by a model. Only a
+# goal with no mechanical sensor reaches the model evaluator.
+GOAL_EVALUATOR = _bool("HARNESS_GOAL_EVALUATOR", True)
+
+# ---------- the clean-state gate: a run may not end leaving the next one a mess ----------
+# Lecture 12's checklist, answered from disk instead of ticked by the model. An empty
+# planned file and a feature passing without evidence are errors; a missing handoff is a
+# warning. Off only for an operator who wants the old end-of-run behaviour.
+CLEAN_STATE = _bool("HARNESS_CLEAN_STATE", True)
+
+# ---------- the evaluator rubric: grade the session, not only the tree ----------
+# Six categories, each scored 0-2, producing Accept / Revise / Block. It is a model call
+# that did not write the work, so it is opt-in and bounded; the mechanical gates
+# (verifier, goal, clean state) run first and can refuse a run without it.
+RUBRIC_ENABLED = _bool("HARNESS_RUBRIC", False)
 
 # Memory hygiene: the event log is streamed to disk and only a window stays resident.
 EVENT_MEMORY_LIMIT = max(200, _int("HARNESS_EVENT_MEMORY", 4000))

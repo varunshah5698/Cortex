@@ -653,7 +653,7 @@ async def stop_run(run_id: str) -> dict:
 
 
 @app.get("/api/run/{run_id}/events")
-async def run_events(run_id: str) -> StreamingResponse:
+async def run_events(run_id: str, replay: bool = True) -> StreamingResponse:
     run = harness.get(run_id)
     if not run:
         raise HTTPException(404, "unknown run")
@@ -664,7 +664,13 @@ async def run_events(run_id: str) -> StreamingResponse:
         # exactly once, even if the run emitted something between the two.
         run.subscribers.append(queue)
         try:
-            for event in list(run.events):
+            history = list(run.events)
+            # A finished run is already on screen: replaying its `done` made the room
+            # install, build and serve the same tree again. `replay=0` sends the bookends
+            # only. A live run has no history to skip, so the flag changes nothing there.
+            if not replay and run.done:
+                history = [event for event in history if event.get("type") in ("start", "done", "error")]
+            for event in history:
                 yield f"data: {json.dumps(event)}\n\n"
             if run.done:
                 return
@@ -763,25 +769,31 @@ async def run_receipt(run_id: str) -> dict:
 
 @app.post("/api/run/{run_id}/preview-check")
 async def preview_check(run_id: str) -> dict:
-    """Tier 3: probe the live service, and record the facts as a `verify` event."""
+    """Tier 3: open the live service in Chrome and record what a person sees.
+
+    The HTTP probe can see a 404 asset; it cannot see a button that renders and does
+    nothing, or a console exception that blanks the page. Chrome drives one real click
+    and reports through the same `verify` event. A machine without Chrome falls back to
+    the probe, and the report says which sensor answered.
+    """
     _run_dir(run_id)
-    service = runner.get(run_id)
-    report = await probe.check(service.url if service else None)
+    service = runner.get(run_id) or _remote_runs.get(run_id) or _vercel_runs.get(run_id)
+    url = getattr(service, "url", None)
+    report = await browser.check(url, interact=True)
+    fallback_used = bool(report.get("skipped"))
+    if fallback_used:
+        fallback = await probe.check(url)
+        fallback["note"] = report.get("note") or "browser check skipped — HTTP probe answered instead"
+        report = fallback
     run = harness.get(run_id)
     if run is not None:
         await run.emit({"type": "verify", **report})
-        await run.emit(
-            {
-                "type": "message",
-                "from": "verify",
-                "kind": "review",
-                "text": (
-                    f"preview checks: {report['checked']} URL(s) requested, {report['errors']} problem(s)"
-                    if report["checked"]
-                    else f"preview check: {report['issues'][0]['detail'] if report['issues'] else 'nothing to check'}"
-                ),
-            }
-        )
+        if report["checked"]:
+            sensor = "URL(s) requested" if fallback_used else "page(s) driven in Chrome"
+            text = f"preview checks: {report['checked']} {sensor}, {report['errors']} problem(s)"
+        else:
+            text = f"preview check: {report['issues'][0]['detail'] if report['issues'] else 'nothing to check'}"
+        await run.emit({"type": "message", "from": "verify", "kind": "review", "text": text})
     return report
 
 

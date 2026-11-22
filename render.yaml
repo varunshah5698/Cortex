@@ -67,3 +67,32 @@ services:
         value: https://dynamic-jay-407.convex.site
       - key: CONVEX_HARNESS_SECRET
         sync: false
+
+  # The public preview host. `cortex` above wires HARNESS_CLOUD_RUNNER_URL to this
+  # service's host via fromService, so this block must exist or the Blueprint sync
+  # fails with a broken fromService reference and nothing deploys at all.
+  # It is deliberately not the harness: no /api, no roster, no provider keys. The only
+  # credential is HARNESS_RUNNER_TOKEN, which must match on both services.
+  - type: web
+    name: cortex-runner
+    runtime: python
+    plan: free
+    region: oregon
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn ai_harness.cloud_runner:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHONPATH
+        value: src
+      # One run at a time on a free instance; the TTL bounds how long a preview lives.
+      - key: HARNESS_RUNNER_MAX_RUNS
+        value: "1"
+      - key: HARNESS_RUNNER_TTL
+        value: "900"
+      - key: HARNESS_RUNNER_WORKSPACE
+        value: /var/tmp/cortex-runner/runs
+      # Set the same value on the `cortex` service (HARNESS_CLOUD_RUNNER_TOKEN).
+      - key: HARNESS_RUNNER_TOKEN
+        sync: false

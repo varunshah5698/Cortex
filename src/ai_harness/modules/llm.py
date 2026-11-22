@@ -16,11 +16,18 @@ import dataclasses
 import time
 from collections.abc import AsyncIterator
 
-from ..config.settings import CACHE_ENABLED, FALLBACK_BASE_URL, FALLBACK_KIND, FALLBACK_MODEL, TEMPERATURE
+from ..config.settings import (
+    CACHE_ENABLED,
+    FALLBACK_BASE_URL,
+    FALLBACK_KIND,
+    FALLBACK_MODEL,
+    STREAM_SECONDS,
+    TEMPERATURE,
+)
 from ..models import Specialist
 from ..utils.logger import event_log
 from . import budget as pricing
-from . import runtime
+from . import roulette, runtime
 from .adapters import ProviderError, aclose, protocol, reachable, warm
 from .adapters import openai_tool_call as _adapter_tool_call
 from .adapters import stream as _adapter_stream
@@ -90,6 +97,10 @@ async def call_tools(
         budget.check()
     if not supports_native_tools(spec):
         raise NativeToolsUnsupported(f"{spec.name} does not expose the OpenAI tool-call shape")
+    # The same draw as `stream`: a native-tool loop is still a loop of provider calls, and
+    # a roulette that only applied to the text protocol would be a feature that silently
+    # switched itself off for the providers that support tools.
+    spec = _draw(spec)
     effective = TEMPERATURE if temperature is None else temperature
     started = time.perf_counter()
 
@@ -152,8 +163,19 @@ async def stream(
     if budget is not None:
         budget.check()
 
+    # Roulette is applied here, at the one place every provider call passes through, so
+    # no node has to know it exists. With the feature off this is the same object back.
+    spec = _draw(spec)
+
     started = time.perf_counter()
     stats.usage.calls += 1
+    # A deadline before a call stops work that has not started. This one stops work that
+    # has: a stream that stalls, or a model that will not stop thinking, used to hold the
+    # run open until the wall-clock limit — one review call ran for 46 minutes and wrote
+    # 8,000 events while the room looked alive. The bound is per call, so a slow-but-
+    # working provider still gets its time; only a call that outlives `STREAM_SECONDS` is
+    # cut, and it is cut with a ProviderError the nodes already handle.
+    deadline = started + STREAM_SECONDS if STREAM_SECONDS else None
     async for kind, text in _adapter_stream(
         spec,
         messages,
@@ -162,6 +184,24 @@ async def stream(
         json_mode=json_mode,
         stats=stats,
     ):
+        if deadline is not None and time.perf_counter() > deadline:
+            # Closing the generator closes the provider connection; the caller keeps the
+            # partial text in `stats`, which is what lets a truncated answer still be
+            # useful instead of vanishing.
+            stats.truncated = True
+            await runtime.emit(
+                {
+                    "type": "stream-cut",
+                    "agent": spec.id,
+                    "model": spec.model,
+                    "seconds": round(time.perf_counter() - started, 1),
+                    "message": (
+                        f"{spec.name}'s call ran past its {STREAM_SECONDS:.0f}s bound and was cut; "
+                        "the text is a prefix, not a complete answer"
+                    ),
+                }
+            )
+            break
         yield (kind, text)
 
     # A provider that omits a count gets an estimate, and the ledger says so.
@@ -177,6 +217,41 @@ async def stream(
     stats.usage.cost_usd = pricing.estimate(spec, stats.usage.prompt_tokens, stats.usage.completion_tokens)
     if budget is not None:
         budget.spend(stats.usage.prompt_tokens + stats.usage.completion_tokens, stats.usage.cost_usd)
+    if stats.truncated:
+        # Say it once, where the spend is recorded. A truncated generation that nobody
+        # mentions is the failure mode this flag exists to end: the file looks written.
+        await runtime.emit(
+            {
+                "type": "truncated",
+                "agent": spec.id,
+                "model": spec.model,
+                "message": (
+                    f"{spec.name}'s output hit the provider's token ceiling; the text is a prefix, "
+                    "not a complete answer"
+                ),
+            }
+        )
+
+
+def _draw(spec: Specialist) -> Specialist:
+    """The specialist for this call, after roulette. Identity when the feature is off."""
+    if not roulette.enabled():
+        return spec
+    run = runtime.current_run()
+    roster = list(getattr(run, "specialists", None) or [])
+    chosen = roulette.pick(spec, roster, str(getattr(run, "run_id", "") or ""))
+    if chosen is spec:
+        return spec
+    # The event is fire-and-forget: a draw must never fail a call that would otherwise
+    # succeed, and the transcript is already the place this belongs.
+    event = roulette.record(chosen, spec)
+    if event is not None:
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(runtime.emit(event))
+        except RuntimeError:  # pragma: no cover - no loop means no run to report to
+            pass
+    return roulette.replace(spec, chosen)
 
 
 async def call(

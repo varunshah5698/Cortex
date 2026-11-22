@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 from pathlib import Path
 
 from ..modules import permissions
@@ -35,10 +36,27 @@ async def run(command: str, workspace: Path, timeout: float = 10.0) -> str:
         cwd=str(workspace),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
+        # Its own session, so a timeout can kill the whole tree. `process.kill()` signals
+        # only the direct child: a `grep` that spawned a helper, or a shell that forked,
+        # leaves the grandchild holding the pipe and `communicate()` never returns. The
+        # tool then reports a timeout it cannot enforce, and the orphan outlives the run.
+        start_new_session=os.name == "posix",
     )
     try:
         stdout, _ = await asyncio.wait_for(process.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
-        process.kill()
+        _kill_tree(process)
         return "[timeout]"
     return stdout.decode("utf-8", "replace")[:4000]
+
+
+def _kill_tree(process) -> None:
+    """Kill the process *group*, then drain the pipe so nothing is left blocked."""
+    try:
+        if os.name == "posix":
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        else:
+            process.kill()
+    except (ProcessLookupError, PermissionError, OSError):
+        # Already gone, or not ours to signal. Either way the child is not running.
+        pass

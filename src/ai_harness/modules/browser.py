@@ -57,11 +57,16 @@ def _report(raw: dict, url: str) -> dict:
         if isinstance(item, dict)
     ]
     errors = sum(1 for item in issues if item["level"] == "error")
+    # A script-level `error` with no issues means the check never opened the page: Chrome
+    # did not launch, did not expose a debugging port, or died mid-run. Reporting that as
+    # `ok: false` with zero issues was a phantom page defect — the run was told its page
+    # was broken by a browser that never loaded it. It is a skip, and the note says why.
+    launch_failure = bool(raw.get("error")) and not issues
     return {
         "ok": bool(raw.get("ok")) and errors == 0,
-        "skipped": bool(raw.get("skipped")),
+        "skipped": bool(raw.get("skipped")) or launch_failure,
         "stage": "browser",
-        "errors": errors,
+        "errors": 0 if launch_failure else errors,
         "warnings": len(issues) - errors,
         "checked": 1,
         "issues": issues[:10],

@@ -176,6 +176,7 @@ That file's job in the build: {objective}
 The request names these capabilities. Every one must exist in the finished build; the
 harness checks each against the tree and reports the ones it cannot find:
 {acceptance}
+{goal}
 
 Your own plan, which you must follow:
 {reasoning}
@@ -211,6 +212,14 @@ Output format, exactly:
 ...complete file...
 ```"""
 
+# The goal gate's statement, injected into the code pass. It is the same sentence the run
+# is judged against at the end, so the writer cannot be surprised by the verdict.
+GOAL_CONTRACT = """
+Goal for this run — the harness checks this at the end, and a run that misses it is not
+reported as done:
+{goal}
+"""
+
 # The repair loop. One JSON object per turn, against a flat state block, so a small
 # model does not have to hold a growing chat: the state is rebuilt from disk each turn.
 # The protocol is text, not provider-native tool calls, so every OpenAI-compatible
@@ -233,13 +242,26 @@ Tools:
 - list {{}} — every file in the run workspace, with line counts.
 - read {{"path": "..."}} — the exact current text. Read before editing; never guess.
 - search {{"query": "...", "path": "."}} — literal text across the run.
+- grep {{"pattern": "regex", "path": ".", "extension": "py", "case_sensitive": false}} —
+  regular-expression search. Use it for a definition or a selector; `search` is the
+  literal version. Both skip dotfiles and the harness's own bookkeeping.
+- shell {{"command": "..."}} — run one allow-listed command in the run workspace. One
+  command only: no pipes, redirects or `;`. Refused when the command is not allow-listed
+  or when no sandbox is available, so treat a refusal as "use read/grep instead".
 - edit {{"path": "...", "find": "exact text", "replace": "new text", "all": false}} —
   replace exactly one unique occurrence. Preferred: it cannot delete the rest of the file.
 - write {{"path": "...", "content": "..."}} — replace a whole file. Only when a whole
   file is genuinely the smallest fix.
 - check {{}} — run the harness's deterministic checks now. No model is involved.
+- skill {{"name": "..."}} — open a reusable procedure this run ships. Only the names are
+  listed below; the body is read when you ask for it. Invoke one when the situation it
+  names is the situation you are in.
+- delegate {{"task": "one question"}} — hand a question to a subagent with its own context.
+  It reads the tree and returns a short answer; you never see its steps. Use it when the
+  answer means reading several files you do not otherwise need.
 - done {{"summary": "what changed"}} — finish. Refused while the last check fails.
 
+{skills}
 Rules:
 1. Read the file before the first edit. An edit whose "find" text is absent, or appears
    more than once, is refused — add surrounding lines until it is unique or set "all".
@@ -441,3 +463,43 @@ def fingerprints() -> dict[str, str]:
         for name, value in sorted(globals().items())
         if name.isupper() and isinstance(value, str)
     }
+
+
+# ---------- the always-on budget ----------
+
+# The always-on set is what every single call pays for before the model sees a task:
+# the standing instructions, the design contract, the tool protocol. Everything here
+# competes with the model's own output budget, so the total is a number worth knowing
+# and worth bounding. Harness2 caps the equivalent at 24,000 characters and says why
+# ("every token here competes with the agent's own output budget"); this is the same
+# idea, measured rather than assumed.
+ALWAYS_ON = ("CODE", "AGENT_REPAIR", "DESIGN_CONTRACT", "JUDGE", "REVIEW")
+ALWAYS_ON_MAX = 24_000
+
+
+def always_on() -> dict[str, int]:
+    """The standing prompt text, measured: per-constant characters and the total.
+
+    Measured on the template, not on a formatted call, so the number is stable across
+    runs and comparable between commits. A formatted call is always larger by whatever
+    the run injects (the request, the files, the findings); this is the floor.
+    """
+    sizes = {name: len(globals().get(name, "")) for name in ALWAYS_ON}
+    return {**sizes, "total": sum(sizes.values()), "max": ALWAYS_ON_MAX}
+
+
+def over_always_on_budget() -> str:
+    """A message naming what is over the cap, or "" when the standing text fits.
+
+    The cap exists to make growth visible. A prompt that quietly doubles is a prompt
+    whose cost and whose effect on output length nobody notices until a run reads badly.
+    """
+    measured = always_on()
+    if measured["total"] <= ALWAYS_ON_MAX:
+        return ""
+    over = measured["total"] - ALWAYS_ON_MAX
+    parts = ", ".join(f"{name} {size}" for name, size in measured.items() if name in ALWAYS_ON)
+    return (
+        f"always-on prompts are {measured['total']} chars, {over} over the "
+        f"{ALWAYS_ON_MAX} cap ({parts}); every char here competes with the model's output budget"
+    )

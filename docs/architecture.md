@@ -187,11 +187,13 @@ Server-sent events on `GET /api/run/{id}/events`:
 `verify` runs in tiers. Tier 1 is structural (`nodes/verify.py::check`: contradictions
 between files, per stack). Tier 2 is the artifact's own toolchain (`modules/toolchain.py`:
 Python compiled in-process, the project's `tsc --noEmit` when a run installed TypeScript).
-Tier 3 is `POST /api/run/{id}/preview-check`, which probes the live service and the assets
-its HTML names; it emits a `verify` event with `stage: "preview"`. Tier 4 is
-`POST /api/run/{id}/browser-check` (also run automatically once a preview answers), which
-opens the page in Chrome and emits `stage: "browser"` with console, page, request and
-interaction findings.
+Tier 3 is `POST /api/run/{id}/preview-check`: Chrome opens the live service and drives one
+real click, then emits a `verify` event with `stage: "browser"` and its console, page,
+request and interaction findings. On a machine without Chrome the check falls back to
+`modules/probe.py` (the page and the assets its HTML names) and says so in `note`, with
+`stage: "preview"`. Tier 4 is `POST /api/run/{id}/browser-check` (also run automatically
+once a preview answers), which records the same browser verdict as `run.browser` without
+waiting for a person to ask.
 
 Processes the runner starts are contained by `modules/sandbox.py`: on macOS every child is
 wrapped in `sandbox-exec` with writes denied under the owner's home (except the run
@@ -301,3 +303,22 @@ lower one becomes the score. The wording is `prompts.JUDGE`, so it is content-ha
 like every other prompt. The score is printed and saved and **never enters the exit
 status**: a sampled grader must not be able to fail a build, so the deterministic checks
 remain the only gate.
+
+### The journal
+
+A suite writes `evals/results/<stamp>.jsonl` as it goes: one line per finished case,
+flushed and fsynced before the next case starts. The aggregate `<stamp>.json` is only
+written once every case is in, so without the journal a suite killed at case five lost the
+four that had already finished — and in `--live` mode, the spend that produced them. The
+journal is the record; the aggregate is a view of it.
+
+`--from-journal <stamp>|latest` rebuilds that view without running anything: no provider,
+no spend, the same table and the same baseline comparison. A torn final line is dropped,
+because it belongs to a case that never finished.
+
+A recovered journal is a *prefix* of a suite, not the suite. So the cases it never
+recorded are named on stderr and the exit status is 1: five green rows must not be
+readable as a clean run when two cases never started. Re-run the suite to fill the gap;
+a partial journal cannot gate a change. The two promoted regressions in
+`evals/regressions.jsonl` are appended to the same journal, so a replay-only journal is
+complete for the replays and partial for the golden cases, which is the honest reading.
