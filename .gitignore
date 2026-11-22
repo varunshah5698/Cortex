@@ -6,6 +6,10 @@ __pycache__/
 dist/
 build/
 out/
+# TypeScript's incremental build cache. `tsc -b` rewrites it on every build, so tracking
+# it meant a permanently dirty tree after any UI build and a merge conflict on every
+# branch that touched the frontend.
+*.tsbuildinfo
 
 # Runs, their logs and the project's memory are runtime state, not source.
 workspace/
