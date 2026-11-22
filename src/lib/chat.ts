@@ -25,7 +25,9 @@ export type ChatMessage = {
   verdict?: Verdict;
   /** The parts a flock split this answer into, so the split survives a reload. */
   flock?: FlockTask[];
-  /** Present once this answer has been handed to the build room. */
+  /** Tokens this turn spent, so a reopened conversation still shows its cost. */
+  tokens?: number;
+  /** Present once this answer has been handed to a build run. */
   build?: BuildCard;
 };
 

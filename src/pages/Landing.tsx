@@ -318,7 +318,7 @@ export default function Landing({ user = null, onLogout }: { user?: User | null;
                 Workshop
               </button>
               <button className="footer-link" onClick={go("app")}>
-                Build room
+                Workspace
               </button>
               {user ? (
                 <button className="footer-link" onClick={onLogout}>

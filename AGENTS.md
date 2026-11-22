@@ -114,7 +114,14 @@ Each line exists because something went wrong without it.
     failing check. A criterion's evidence must be the capability's own vocabulary, and it
     must be anchored (`<li[\s>]`, not `<li`) or it will match `<link` and the sensor will
     cry wolf.
-19. Cloud execution is a separate service (`ai_harness/cloud_runner.py`), not a second
+19. A flock is a chat with a team (`core/flock.py`), not a second pipeline. The planner
+    splits the request, each part goes to the specialist whose role fits it, the parts run
+    at the same time, and a synthesizer writes the one answer. Every call goes through
+    `llm.call` / `llm.stream`, or the most expensive thing a chat can do is the one thing
+    the budget cannot see. A part that fails is reported and named to the synthesizer —
+    never silently dropped from the answer — and a team of one answers normally instead of
+    pretending to fan out.
+20. Cloud execution is a separate service (`ai_harness/cloud_runner.py`), not a second
     route on `/api`. The harness submits a tar.gz with a server-to-server token; the
     runner has no roster, provider keys or `/api`, and returns a per-run capability URL.
     A new cloud provider must keep that boundary rather than exposing the harness.

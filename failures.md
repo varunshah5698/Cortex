@@ -26,6 +26,12 @@ belong here. The component column is the part of the harness that owned the fail
 | 2026-11-20 | `22bd95b75e20` | cancelled | cancelled | — |
 | 2026-11-20 | `56139ed8e879` | unknown | ValueError: too many values to unpack (expected 2) | — |
 | 2026-11-22 | `ab759ace5938` | cancelled | cancelled | — |
+| 2026-11-22 | `3edf0cc9f978` | code | src/index.css: src/index.css was declared by the plan but is still empty | index.html, src/App.tsx, src/components/About.tsx, src/components/Contact.tsx |
+| 2026-11-22 | `bd9db460b09e` | unknown | stopped without a reported cause | — |
+| 2026-11-22 | `136000d54a3a` | code | src/App.tsx: does not parse:          ╵ ~~ | src/App.tsx |
+| 2026-11-22 | `3cc7c0634dab` | code | cancelled | todo.md |
+| 2026-11-22 | `348fbf9324b2` | code | src/main.tsx: does not parse:          ╵ ~~ | src/components/Header.tsx, src/index.css, src/main.tsx |
+| 2026-11-22 | `c8d35d310f55` | unknown | stopped without a reported cause | — |
 
 ## What changed
 

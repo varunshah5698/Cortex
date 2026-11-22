@@ -37,6 +37,25 @@ export const seedPrompts: { group: string; items: string[] }[] = [
 ];
 
 const STORAGE_KEY = "cortex.threads.v1";
+const ACTIVE_KEY = "cortex.active.v1";
+
+/** The thread that was open when the page was last closed. */
+export function loadActive(): string | null {
+  try {
+    return localStorage.getItem(ACTIVE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function saveActive(id: string | null) {
+  try {
+    if (id) localStorage.setItem(ACTIVE_KEY, id);
+    else localStorage.removeItem(ACTIVE_KEY);
+  } catch {
+    /* storage may be unavailable */
+  }
+}
 
 function load(): Thread[] {
   try {

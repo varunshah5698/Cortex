@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import { roleColor, roleLabel, type Role, type Specialist } from "../lib/providers";
+import { Office, type AgentStatus, type AgentView, type Zone } from "./office/Office";
 import type { FlockTask } from "../lib/chat";
 import {
   SERVICE_BUSY,
@@ -18,7 +19,10 @@ import {
   startShare,
   stopService,
   stopShare,
+  subscribe,
   type FileRow,
+  type HarnessEvent,
+  type PlanUnit,
   type RunMetrics,
   type RunService,
   type RunShare,
@@ -42,6 +46,8 @@ type Props = {
   runId: string | null;
   /** True when that run is a build, so the panel names the run rather than a model. */
   building?: boolean;
+  /** The build card's status: the harness only serves a run that reached `done`. */
+  buildStatus?: "running" | "done" | "error";
   /** True while the turn is still streaming. */
   live: boolean;
   /** Tokens spent this turn. */
@@ -49,6 +55,17 @@ type Props = {
   /** The answer, for the preview tab's fallback when there is no run. */
   answer: string;
 };
+
+const zoneFor = (role: string): Zone => {
+  if (role === "planner") return "planning";
+  if (role === "research") return "research";
+  if (role === "reviewer") return "review";
+  return "coding";
+};
+
+/** A flock part's state, in the vocabulary the office scene draws. */
+const officeStatus = (status: FlockTask["status"]): AgentStatus =>
+  status === "running" ? "coding" : status === "done" ? "done" : status === "error" ? "error" : "idle";
 
 const statusLabel: Record<FlockTask["status"], string> = {
   pending: "queued",
@@ -84,6 +101,7 @@ export function WorkPanel({
   mode,
   runId,
   building = false,
+  buildStatus,
   live,
   spent,
   answer,
@@ -102,6 +120,15 @@ export function WorkPanel({
   const [fault, setFault] = useState<string | null>(null);
   const [logsOpen, setLogsOpen] = useState(false);
   const [runs, setRuns] = useState<RunMetrics[]>([]);
+  // The run's own verdict, for a run opened by URL or from history: the chat's build card
+  // only exists for a build started in this thread.
+  const [runDone, setRunDone] = useState<boolean | null>(null);
+  // The plan and the conversation between specialists: the old room's rail and activity
+  // feed, which a build still emits and nothing was reading any more.
+  const [plan, setPlan] = useState<PlanUnit[]>([]);
+  const [feed, setFeed] = useState<{ id: number; from: string; text: string; kind: string }[]>([]);
+  const [phase, setPhase] = useState<string>("");
+  const [verdict, setVerdict] = useState<{ ok: boolean; errors: number; warnings: number } | null>(null);
   const [autoApprove, setAutoApprove] = useState(() => localStorage.getItem("cortex:autoApprove") === "1");
 
   // A late answer from a previous run must not land on the current one.
@@ -306,10 +333,59 @@ export function WorkPanel({
     void boot(runId, false, autoApprove);
   }, [runId, live, building, autoApprove, boot]);
 
+  // A build's own stream, read for the three things the panel cannot infer from files:
+  // what the plan said it would write, what the team said to each other, and whether the
+  // checks passed. `replay=0` asks a finished run for its bookends only, so reopening one
+  // does not re-deliver an eight-thousand-event transcript.
+  useEffect(() => {
+    if (!open || !runId || !building) {
+      setPlan([]);
+      setFeed([]);
+      setPhase("");
+      setVerdict(null);
+      return;
+    }
+    let seq = 0;
+    const source = subscribe(
+      runId,
+      (event: HarnessEvent) => {
+        switch (event.type) {
+          case "plan":
+            setPlan(event.units ?? []);
+            break;
+          case "phase":
+            setPhase(event.phase ?? "");
+            break;
+          case "message":
+            setFeed((prev) => [...prev.slice(-40), { id: ++seq, from: event.from, text: event.text, kind: event.kind }]);
+            break;
+          case "verify":
+            setVerdict({ ok: event.ok, errors: event.errors, warnings: event.warnings });
+            break;
+          case "done":
+            setPhase("done");
+            break;
+          case "error":
+            setPhase("failed");
+            break;
+          default:
+            break;
+        }
+      },
+      { replay: false },
+    );
+    return () => source.close();
+  }, [open, runId, building]);
+
   // Recent runs, so the panel can reopen one without a separate page.
   useEffect(() => {
     if (!open) return;
-    void loadRuns().then(setRuns);
+    void loadRuns().then((list) => {
+      setRuns(list);
+      if (!runId) return;
+      const match = list.find((item) => item.run_id === runId);
+      setRunDone(match ? Boolean(match.done) : null);
+    });
   }, [open, runId]);
 
   const done = tasks.filter((t) => t.status === "done").length;
@@ -320,6 +396,35 @@ export function WorkPanel({
     return map;
   }, [roster]);
 
+  // The room, driven by the same state as the board: a part that is running is a
+  // specialist typing at their desk, so the picture cannot drift from the list.
+  const officeAgents: AgentView[] = useMemo(() => {
+    if (tasks.length === 0) {
+      return team.map((s) => ({
+        id: s.id,
+        name: s.name,
+        role: s.role,
+        zone: zoneFor(s.role),
+        status: "idle" as AgentStatus,
+        tokens: 0,
+        latency: 0,
+      }));
+    }
+    return tasks.map((task) => {
+      const owner = byAgent.get(task.agent);
+      return {
+        id: task.id,
+        name: task.agentName || owner?.name || "Specialist",
+        role: owner?.role ?? task.role,
+        zone: zoneFor(owner?.role ?? task.role),
+        status: officeStatus(task.status),
+        bubble: task.title,
+        tokens: task.chars,
+        latency: 0,
+      };
+    });
+  }, [tasks, team, byAgent]);
+
   const pendingCount = (service?.state === "needs_approval" ? 1 : 0) + (share?.state === "needs_approval" ? 1 : 0);
   const servedUrl = (id: string): string => {
     if (service?.state === "ready" && service.url && (service.remote || service.token)) {
@@ -328,6 +433,10 @@ export function WorkPanel({
     return previewUrl(id);
   };
   const serviceReady = service?.state === "ready";
+  // A run that failed or is still writing cannot be served: the harness answers 409 and
+  // says so. Disabling the button is the honest version of that rule.
+  const finished = buildStatus ? buildStatus === "done" : runDone === true;
+  const servable = Boolean(runId) && finished;
 
   if (!open) return null;
 
@@ -360,6 +469,26 @@ export function WorkPanel({
                   {live ? "live" : tasks.length ? `${done}/${tasks.length}` : "idle"}
                 </em>
               </header>
+
+              {building && (phase || verdict) && (
+                <div className="wp-buildline">
+                  {phase && <span className={`wp-phase is-${phase}`}>{phase}</span>}
+                  {verdict && (
+                    <span className={`wp-verdict${verdict.ok ? " is-ok" : " is-bad"}`}>
+                      {verdict.ok
+                        ? "checks clean"
+                        : `${verdict.errors} error${verdict.errors === 1 ? "" : "s"}`}
+                      {verdict.warnings > 0 && ` · ${verdict.warnings} warning${verdict.warnings === 1 ? "" : "s"}`}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {officeAgents.length > 0 && (
+                <div className="wp-office">
+                  <Office agents={officeAgents} />
+                </div>
+              )}
 
               {tasks.length > 0 ? (
                 <ol className="wp-tasks">
@@ -396,6 +525,38 @@ export function WorkPanel({
                     </div>
                   ))}
                   {team.length === 0 && <p className="wp-empty">No specialist is configured yet.</p>}
+                </div>
+              )}
+
+              {building && plan.length > 0 && (
+                <div className="wp-plan">
+                  <p className="wp-plan-head">
+                    Plan <em>{plan.length} file{plan.length === 1 ? "" : "s"}</em>
+                  </p>
+                  <ul>
+                    {plan.map((unit) => {
+                      const written = files.some((f) => f.path === unit.file && f.done);
+                      return (
+                        <li key={unit.id} className={written ? "is-done" : ""}>
+                          <span className="wp-plan-dot" style={{ background: roleColor(unit.role as Role) }} />
+                          <span className="wp-plan-file">{unit.file}</span>
+                          <small>{unit.agent}</small>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+
+              {building && feed.length > 0 && (
+                <div className="wp-feed">
+                  <p className="wp-plan-head">Activity</p>
+                  {feed.slice(-6).map((line) => (
+                    <p key={line.id} className={`wp-feed-line kind-${line.kind}`}>
+                      <b>{line.from}</b>
+                      {line.text}
+                    </p>
+                  ))}
                 </div>
               )}
 
@@ -539,18 +700,28 @@ export function WorkPanel({
                 <div className="wp-actions">
                   <button
                     className="wp-btn is-primary"
-                    disabled={!runId || serviceBusy || live}
-                    onClick={() => void boot(runId, serviceReady)}
+                    disabled={!servable || serviceBusy}
+                    onClick={() => runId && void boot(runId, serviceReady)}
                     title={
-                      live
-                        ? "The team is still writing — this unlocks when the run finishes"
+                      !servable
+                        ? live || buildStatus === "running" || runDone === false
+                          ? "The team is still writing — this unlocks when the run finishes"
+                          : "This run did not finish, so there is nothing to serve"
                         : serviceReady
                           ? "Stop, then install, build and serve again"
                           : "Install, build and serve the finished tree"
                     }
                   >
                     <Icon name="send" size={11} />
-                    {live ? "Writing…" : serviceBusy ? "Starting…" : serviceReady ? "Restart" : "Run preview"}
+                    {!servable
+                      ? live || buildStatus === "running" || runDone === false
+                        ? "Writing…"
+                        : "Not finished"
+                      : serviceBusy
+                        ? "Starting…"
+                        : serviceReady
+                          ? "Restart"
+                          : "Run preview"}
                   </button>
 
                   {service && SERVICE_BUSY.includes(service.state) && (
@@ -650,9 +821,11 @@ export function WorkPanel({
                 ) : (
                   <div className="wp-answer">
                     <p className="wp-empty">
-                      {live
+                      {live || buildStatus === "running" || runDone === false
                         ? "The team is still writing. Run the preview when the run finishes."
-                        : "Nothing is served yet. Run the preview to install, build and open this run."}
+                        : buildStatus === "error"
+                          ? "This run stopped before it finished, so there is no tree to serve."
+                          : "Nothing is served yet. Run the preview to install, build and open this run."}
                     </p>
                     {answer && <pre>{answer.slice(0, 4000)}</pre>}
                   </div>

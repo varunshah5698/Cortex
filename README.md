@@ -31,15 +31,30 @@ steps and the features that stay local (source previews, browser checks). The si
 real sign-up/sign-in; accounts live in `HARNESS_AUTH_DB` and need a Render disk to
 survive restarts.
 
-Open `http://127.0.0.1:5178/#/build`. Configure specialists first in the workshop
+Open `http://127.0.0.1:5178/#/app`. Configure specialists first in the workshop
 (`#/setup`): each one is a provider, model and role. A key typed there is sent once to
 the harness and stored on the server; the browser keeps only the non-secret fields.
+
+The workspace is one chat surface. The composer has three modes: **Solo** answers with one
+specialist, **Flock** splits the request across several (`core/flock.py`), runs the parts
+in parallel, and composes one answer, and **Build** starts a real run that plans, writes
+files and serves a page. There is no separate build room; everything the old one could do
+lives in the panel beside the chat:
+
+* **Work** — the pixel room, the plan and its owners, the specialists' activity, the
+  phase and the verification verdict.
+* **Files** — every file the run wrote, with a code view.
+* **Preview** — install/build/serve with the approval gate, the browser check, the repair
+  run, the public share, and the server log.
+
+`#/app?run=<id>` opens a specific run, and the panel's run picker reopens a recent one.
 
 ## Where things live
 
 ```
 src/ai_harness/          the Python harness (agents, nodes, tools, core)
-src/pages/Build.tsx      the pixel office build room
+src/App.tsx              the workspace: chat, composer modes, work panel
+src/components/WorkPanel.tsx  the flock board, files and preview beside the chat
 src/pages/Files.tsx      file explorer with per-file code view
 src/pages/Metrics.tsx    latency, token usage and cost
 workspace/runs/<id>/     the sandbox for one run

@@ -109,7 +109,7 @@ export default function Files() {
             <Icon name="search" size={13} />
             <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter files" />
           </label>
-          {groups.length === 0 && <p className="vault-empty">No files yet. Start a run in the build room.</p>}
+          {groups.length === 0 && <p className="vault-empty">No files yet. Start a build from the chat and its files land here.</p>}
           {groups.map(([dir, list]) => (
             <div className="vault-group" key={dir}>
               <span className="vault-dir">

@@ -78,10 +78,21 @@ export default function App() {
   const [view, setView] = useState<"chat" | "account">("chat");
   // A run can be reopened from the URL (`#/app?run=<id>`) or from the last build, so a
   // preview survives a reload instead of disappearing with the page.
-  const [runId, setRunId] = useState<string | null>(() => {
-    const fromUrl = new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("run");
-    return fromUrl || localStorage.getItem("cortex:lastRun") || null;
-  });
+  const runFromUrl = () => new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("run");
+  const [runId, setRunId] = useState<string | null>(
+    () => runFromUrl() || localStorage.getItem("cortex:lastRun") || null,
+  );
+  // The hash is the address of a run, so it has to be read on every change: initialising
+  // from it once meant `?run=<id>` was ignored for the whole life of the page and the
+  // panel kept showing whichever run happened to be in storage.
+  useEffect(() => {
+    const onHash = () => {
+      const next = runFromUrl();
+      if (next) setRunId(next);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
 
   useEffect(() => {
     if (runId) localStorage.setItem("cortex:lastRun", runId);
@@ -477,6 +488,9 @@ export default function App() {
   // A build is "live" only while its card says running: a failed or finished build is
   // still worth showing, but calling it live is a lie the panel would repeat.
   const building = lastAnswer?.build?.status === "running";
+  // The card only describes the run it names. A run opened from history or the URL has no
+  // card, so its status must come from the run itself, not from this thread's last build.
+  const cardForRun = lastAnswer?.build?.runId === panelRun ? lastAnswer.build : undefined;
   const flockTeam = team
     .map((id) => roster.find((s) => s.id === id))
     .filter((s): s is NonNullable<typeof s> => Boolean(s));
@@ -626,7 +640,8 @@ export default function App() {
         team={panelTeam}
         mode={mode}
         runId={panelRun}
-        building={Boolean(lastAnswer?.build)}
+        building={Boolean(cardForRun)}
+        buildStatus={cardForRun?.status}
         live={busy || building}
         spent={panelSpent}
         answer={streaming ?? messages.filter((m) => m.role === "assistant").at(-1)?.content ?? ""}
