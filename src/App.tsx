@@ -19,7 +19,7 @@ import {
 } from "./lib/chat";
 import { startRun } from "./lib/harness";
 import { hydrateRoster, isConfigured, loadRoster, loadSelected, saveSelected } from "./lib/providers";
-import { titleFor, useThreads } from "./lib/threads";
+import { loadActive, saveActive, titleFor, useThreads } from "./lib/threads";
 import { appendMessage, createThread, recordRunStart } from "./lib/cloud";
 import { navigate } from "./lib/router";
 import { useSession } from "./lib/auth";
@@ -50,7 +50,13 @@ export default function App() {
     const saved = loadSelected();
     return saved && roster.some((r) => r.id === saved) ? saved : roster[0]?.id ?? "";
   });
-  const [activeId, setActiveId] = useState<string | null>(null);
+  // Restore the open conversation. A reload used to drop the person back to the empty
+  // state with their thread still in the rail, which reads as lost work.
+  const [activeId, setActiveId] = useState<string | null>(() => {
+    const saved = loadActive();
+    return saved && threads.some((t) => t.id === saved) ? saved : null;
+  });
+  useEffect(() => saveActive(activeId), [activeId]);
   const [collapsed, setCollapsed] = useState(false);
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
@@ -70,7 +76,16 @@ export default function App() {
   const [panelOpen, setPanelOpen] = useState(true);
   const [panelTab, setPanelTab] = useState<PanelTab>("work");
   const [view, setView] = useState<"chat" | "account">("chat");
-  const [runId, setRunId] = useState<string | null>(null);
+  // A run can be reopened from the URL (`#/app?run=<id>`) or from the last build, so a
+  // preview survives a reload instead of disappearing with the page.
+  const [runId, setRunId] = useState<string | null>(() => {
+    const fromUrl = new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("run");
+    return fromUrl || localStorage.getItem("cortex:lastRun") || null;
+  });
+
+  useEffect(() => {
+    if (runId) localStorage.setItem("cortex:lastRun", runId);
+  }, [runId]);
 
   const abortRef = useRef<AbortController | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -145,6 +160,69 @@ export default function App() {
         .map((id) => roster.find((s) => s.id === id))
         .filter((s): s is NonNullable<typeof s> => Boolean(s) && isConfigured(s as never));
       const useFlock = mode === "flock" && flockTeam.length >= 2;
+      // Build mode is the only path that scaffolds a tree and writes files. Solo and
+      // flock both answer in prose, so a request typed here used to come back as an essay
+      // with no files and no scaffold — the build pipeline existed but nothing in the
+      // composer reached it.
+      if (mode === "build") {
+        const teamForBuild = flockTeam.length ? flockTeam : roster.filter((s) => isConfigured(s as never));
+        if (!teamForBuild.length) {
+          setError("No specialist has a model and a key yet — configure the roster first.");
+          return;
+        }
+        setError(null);
+        setDraft("");
+        setBusy(true);
+        resetTurn();
+
+        // A build is a turn in the conversation, not a detour: the request and the run
+        // card belong in the thread, or the person is left holding a panel with no record
+        // of what they asked for.
+        let buildThread = activeId;
+        if (!buildThread) {
+          buildThread = crypto.randomUUID();
+          setThreads((prev) => [
+            { id: buildThread!, title: titleFor(content), messages: [{ role: "user", content }], updatedAt: Date.now() },
+            ...prev,
+          ]);
+          setActiveId(buildThread);
+        } else {
+          patch(buildThread, (t) => ({
+            ...t,
+            messages: [...t.messages, { role: "user", content }],
+            updatedAt: Date.now(),
+          }));
+        }
+
+        try {
+          // `depth` here is the chat's reasoning depth (off/brief/deep/ultra); a build
+          // takes its own (quick/deep/ultra). Map rather than cast: `off` and `brief` are
+          // both "no extra passes" for a build, which is `quick`.
+          const buildDepth = depth === "ultra" ? "ultra" : depth === "deep" ? "deep" : "quick";
+          const id = await startRun(content, teamForBuild, buildDepth);
+          setRunId(id);
+          setPanelOpen(true);
+          setPanelTab("files");
+          patch(buildThread, (t) => ({
+            ...t,
+            updatedAt: Date.now(),
+            messages: [
+              ...t.messages,
+              {
+                role: "assistant",
+                content: `Building this now: **${content}**. The files land in the panel as the team writes them.`,
+                build: { runId: id, prompt: content, at: Date.now(), status: "running", files: 0, tokens: 0 },
+              },
+            ],
+          }));
+          void recordRunStart(id, content, buildDepth);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Cortex did not start the build.");
+        } finally {
+          setBusy(false);
+        }
+        return;
+      }
       if (!useFlock && !specialist) return;
 
       setError(null);
@@ -251,6 +329,7 @@ export default function App() {
               check: selfCheck || undefined,
               verdict: selfVerdict || undefined,
               flock: parts.length ? parts : undefined,
+              tokens,
             },
           ],
           updatedAt: Date.now(),
@@ -272,6 +351,7 @@ export default function App() {
                 check: selfCheck || undefined,
                 verdict: selfVerdict || undefined,
                 flock: parts.length ? parts : undefined,
+                tokens,
               },
             ],
             updatedAt: Date.now(),
@@ -386,6 +466,17 @@ export default function App() {
   };
 
   const isEmpty = messages.length === 0 && streaming === null;
+  // While a turn runs, the panel shows that turn. Between turns it shows the last
+  // answer's flock, so reopening a conversation does not read as an idle room.
+  const lastAnswer = [...messages].reverse().find((m) => m.role === "assistant");
+  const panelTasks = busy ? tasks : (lastAnswer?.flock ?? []);
+  const panelSpent = busy ? spent : (lastAnswer?.tokens ?? 0);
+  // A build's files live under its run, not under whatever was built last: reopening a
+  // thread must show that thread's run, or the panel is showing someone else's work.
+  const panelRun = runId ?? lastAnswer?.build?.runId ?? null;
+  // A build is "live" only while its card says running: a failed or finished build is
+  // still worth showing, but calling it live is a lie the panel would repeat.
+  const building = lastAnswer?.build?.status === "running";
   const flockTeam = team
     .map((id) => roster.find((s) => s.id === id))
     .filter((s): s is NonNullable<typeof s> => Boolean(s));
@@ -530,12 +621,14 @@ export default function App() {
         onClose={() => setPanelOpen(false)}
         tab={panelTab}
         onTab={setPanelTab}
-        tasks={tasks}
+        tasks={panelTasks}
+        roster={roster}
         team={panelTeam}
         mode={mode}
-        runId={runId}
-        live={busy}
-        spent={spent}
+        runId={panelRun}
+        building={Boolean(lastAnswer?.build)}
+        live={busy || building}
+        spent={panelSpent}
         answer={streaming ?? messages.filter((m) => m.role === "assistant").at(-1)?.content ?? ""}
       />
     </div>

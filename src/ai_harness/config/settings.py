@@ -322,8 +322,11 @@ PROVIDER_RATE_LIMIT = _int("HARNESS_RATE_LIMIT_PER_MIN", 60)
 
 # In-flight requests per (base URL, model). Gateway accounts such as River publish no
 # fixed allowance and answer 429 when concurrency is too high; 1 serializes each model.
-# 0 leaves concurrency to the provider.
-PROVIDER_CONCURRENCY = max(0, _int("HARNESS_PROVIDER_CONCURRENCY", 0))
+# 0 leaves concurrency to the provider. The default is 2, not 0: a team of six specialists
+# on one shared key fired six simultaneous writes and produced a 429 storm — 34 retries,
+# 16 thrash events, and a run that stopped short with every file half-written. Two keeps
+# the fan-out useful without competing with itself.
+PROVIDER_CONCURRENCY = max(0, _int("HARNESS_PROVIDER_CONCURRENCY", 2))
 
 # ---------- HTTP surface ----------
 

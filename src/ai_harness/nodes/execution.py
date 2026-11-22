@@ -8,6 +8,7 @@ from ..agents import executor
 from ..config.settings import (
     AGENT_STEPS,
     CRITIQUE_CLIP_TOKENS,
+    PROVIDER_CONCURRENCY,
     REASONING_CLIP_TOKENS,
     REASONING_CRITIC,
     REASONING_WORDS,
@@ -15,6 +16,7 @@ from ..config.settings import (
 from ..core.state import RunState
 from ..models import Specialist, WorkUnit
 from ..modules import agent_loop, context, goal, intent, llm, memory, progress, prompts, protected, thrash, tool_log
+from ..utils.validators import strip_protocol
 from . import verify
 
 
@@ -83,8 +85,9 @@ class FileSink:
         if path in self.dropped or path not in self.opened:
             return
         self.buffers[path] += delta
-        self.run.files[path].update(agent=self.agent.id, content=self.buffers[path])
-        self.run.fm.write(path, self.buffers[path])
+        clean = strip_protocol(self.buffers[path])
+        self.run.files[path].update(agent=self.agent.id, content=clean)
+        self.run.fm.write(path, clean)
         await self.run.emit({"type": "file", "path": path, "delta": delta})
 
     async def finish(self, files: list[tuple[str, str]]) -> list[str]:
@@ -92,6 +95,9 @@ class FileSink:
         shipped: list[str] = []
         for path, content in files:
             if path in self.dropped or not content.strip():
+                continue
+            content = strip_protocol(content)
+            if not content.strip():
                 continue
             self.run.files[path] = {
                 "agent": self.agent.id,
@@ -475,4 +481,18 @@ async def run(run: RunState, units: list[WorkUnit], notes: list[str], negotiate_
         for unit in units:
             await write_unit(run, unit, notes)
         return
-    await asyncio.gather(*(write_unit(run, unit, notes) for unit in units))
+    # A team sharing one account shares its rate limit. Firing every file at once is the
+    # fastest way to a 429 storm: six specialists on one key produced 34 retries, 16 thrash
+    # events and a run that stopped short, because each writer's retry competed with the
+    # other five. Cap the fan-out per provider account instead of per run.
+    limit = max(1, min(len(units), PROVIDER_CONCURRENCY))
+    if limit >= len(units):
+        await asyncio.gather(*(write_unit(run, unit, notes) for unit in units))
+        return
+    gate = asyncio.Semaphore(limit)
+
+    async def one(unit: WorkUnit) -> None:
+        async with gate:
+            await write_unit(run, unit, notes)
+
+    await asyncio.gather(*(one(unit) for unit in units))

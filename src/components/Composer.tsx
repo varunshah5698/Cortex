@@ -10,8 +10,8 @@ function compact(n: number) {
 }
 import { roleColor, roleLabel, type Specialist } from "../lib/providers";
 
-/** How the composer spends a turn. `flock` is the multi-model one. */
-export type Mode = "solo" | "flock";
+/** How the composer spends a turn. `flock` is the multi-model one; `build` writes files. */
+export type Mode = "solo" | "flock" | "build";
 
 export type ComposerProps = {
   value: string;
@@ -105,7 +105,10 @@ export function Composer({
 
       <div className="composer-tools">
         <div className="ct-left">
-          {/* Mode: one model, or a flock. This is the switch the whole page turns on. */}
+          {/* Mode: one model, a flock, or a real build. The third one writes files and
+              scaffolds the tree; the first two only ever answer in prose. Without it the
+              only way to reach the build pipeline was a suggestion card, so "build me a
+              portfolio" typed into this box came back as an essay and no files. */}
           <div className="mode-switch" role="group" aria-label="How to answer">
             <button
               type="button"
@@ -123,6 +126,15 @@ export function Composer({
             >
               <Icon name="flock" size={13} />
               Flock
+            </button>
+            <button
+              type="button"
+              className={mode === "build" ? "is-on" : ""}
+              onClick={() => onMode("build")}
+              title="Plan, scaffold and write real files, then serve a preview"
+            >
+              <Icon name="code" size={13} />
+              Build
             </button>
           </div>
 
@@ -254,7 +266,9 @@ export function Composer({
         <span className="foot-hint">
           {mode === "flock"
             ? "Enter splits the task · the flock answers in parallel"
-            : "Enter sends · Shift+Enter adds a line"}
+            : mode === "build"
+              ? "Enter builds it · plans, scaffolds and writes real files"
+              : "Enter sends · Shift+Enter adds a line"}
         </span>
         <span className="foot-est">
           {budget.calls} call{budget.calls === 1 ? "" : "s"} · ~{budget.seconds}s
