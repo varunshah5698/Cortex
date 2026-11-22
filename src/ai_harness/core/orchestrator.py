@@ -161,6 +161,18 @@ class Orchestrator:
                 }
             )
             return
+        if service.state == "ready":
+            # The ledger is what a reload and the metrics page read. A preview that is
+            # live on a port but recorded as `previewed: false` is two answers to one
+            # question, and the `done` event below is the one the UI sees first.
+            self.run.previewed = True
+            self.run.build = {
+                "state": service.state,
+                "kind": getattr(service, "kind", "static"),
+                "detail": service.detail,
+                "at": now_iso(),
+            }
+            self.persist_metrics()
         await self.run.emit(
             {
                 "type": "message",

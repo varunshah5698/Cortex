@@ -114,6 +114,10 @@ def assign(parts: list[Part], specialists: list[Specialist]) -> None:
             match = pool[index % len(pool)]
         part.agent = match.id
         part.agent_name = match.name
+        # The planner names a role, but a weak model often echoes a specialist's name
+        # there instead. Record the owner's real role so the board colours and labels
+        # the part by what it is, not by what the model guessed.
+        part.role = match.role
         used[match.id] = used.get(match.id, 0) + 1
 
 

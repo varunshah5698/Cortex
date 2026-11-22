@@ -9,6 +9,7 @@ install, and still stops at `needs_approval` for one that does.
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -56,6 +57,10 @@ def test_a_finished_run_starts_its_own_preview(tmp_path, monkeypatch) -> None:
 
     assert calls == [("auto-preview-test", False)], "the run did not start its own preview"
     assert any("Preview ready" in str(event.get("text", "")) for event in run.events)
+    assert run.previewed is True, "a live preview must be reflected in the run"
+    assert run.build and run.build["state"] == "ready"
+    ledger = json.loads((tmp_path / ".harness-metrics.json").read_text(encoding="utf-8"))
+    assert ledger["previewed"] is True and ledger["build"]["state"] == "ready"
 
 
 def test_auto_preview_still_reports_needs_approval(tmp_path, monkeypatch) -> None:
