@@ -39,6 +39,7 @@ from .config.settings import (
     AGENT_STEPS,
     AUTH_DB,
     AUTH_DURABLE,
+    AUTO_PREVIEW,
     BROWSER_CHECK,
     CACHE_ENABLED,
     DIST_DIR,
@@ -259,6 +260,18 @@ def _contained(workspace: Path, path: str) -> Path:
         return paths.contained(workspace, path)
     except UnsafePath:
         raise HTTPException(404, "file not found") from None
+
+
+def _run_reached_done(run: RunState | None) -> bool:
+    """True only for a run the verifier finished, not one the harness closed out.
+
+    A run stopped by an error, or one a restart found unfinished, also has `done` True so
+    its files can still be read. Those are not a verdict on finished work, so they keep
+    the approval prompt; a run whose log ends in `done` does not need it.
+    """
+    if run is None or not run.done:
+        return False
+    return not run.events or any(event.get("type") == "done" for event in run.events)
 
 
 def _record_build(run: RunState, service: runner.Service) -> None:
@@ -956,6 +969,22 @@ async def serve_start(run_id: str, restart: bool = False, approve: bool = False)
                 _browser_tasks.add(task)
                 task.add_done_callback(_browser_tasks.discard)
         return deployed.as_dict()
+
+    # A finished local run is previewed on the click that was already made. The
+    # install/build/serve checkpoint exists so code a model wrote does not run out of a
+    # half-written tree; `done` is the verifier saying that tree stopped changing. Cloud
+    # and Vercel still ask above: they publish to someone else's computer.
+    if AUTO_PREVIEW and REQUIRE_APPROVAL and not approve and _run_reached_done(run):
+        approve = True
+        if run is not None:
+            await run.emit(
+                {
+                    "type": "message",
+                    "from": "runner",
+                    "text": "This run is done — starting its preview without another approval.",
+                    "kind": "serve",
+                }
+            )
 
     service = await runner.start(
         run_id,

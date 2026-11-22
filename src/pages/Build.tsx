@@ -739,15 +739,15 @@ export default function Build() {
     };
   }, [runId, serviceState, browserPending]);
 
-  // A preview the operator approved once is restored after a harness restart. The
-  // approval is per run and kept in this browser; Stop removes it.
+  // A finished run is previewable on arrival. The harness auto-approves the local
+  // install/build/serve of a `done` run, so reopening the room starts the same preview
+  // the run would have shown; Stop and "Restart the preview" still control it.
   useEffect(() => {
     if (!runId || running || phase !== "done" || serviceState) return;
-    if (localStorage.getItem(approvedKey(runId)) !== "1" && !autoApprove) return;
     autoBooted.current = runId;
-    setNotice("Restoring the preview you approved for this run.");
+    setNotice("Starting the preview for this finished run.");
     void boot(runId, false, true);
-  }, [autoApprove, runId, running, phase, serviceState, boot]);
+  }, [runId, running, phase, serviceState, boot]);
 
   // A service that just became ready means a fresh document to load.
   useEffect(() => {

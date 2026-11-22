@@ -501,7 +501,9 @@ class Service:
         if effect == permissions.ASK and REQUIRE_APPROVAL and not self.approved:
             raise ApprovalRequired(command, reason)
         if effect == permissions.ASK:
-            self.log(f"approved by the operator: {permissions.command_line(command)}")
+            # The approval may be the operator's or, for a finished run's local preview,
+            # the policy in main.py; the line says what happened, not who decided.
+            self.log(f"approved: {permissions.command_line(command)}")
             event_log(self.run_id, "approve", command=permissions.command_line(command), reason=reason)
         # Containment, not policy: writes are limited to the workspace and caches, and
         # key material is unreadable. `prefix` returns [] where no sandbox exists; where

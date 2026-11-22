@@ -777,6 +777,48 @@ def test_marker_files_are_registered_written_and_verified(tmp_path: Path) -> Non
         state_mod.RUNS_ROOT = original_root
 
 
+def test_a_unit_that_writes_no_file_is_asked_again(tmp_path: Path) -> None:
+    """Every planned file gets a second ask: an empty answer is a failed unit, not a file.
+
+    The clean-state gate treats a planned file nobody wrote as an error, so a unit that
+    silently produced nothing used to leave the run unrecoverable. The retry names the
+    empty answer in the second request.
+    """
+    original_root = state_mod.RUNS_ROOT
+    original_stream = llm.stream
+    state_mod.RUNS_ROOT = tmp_path
+    asks: list[str] = []
+
+    async def fake_stream(agent, messages, think=True, stats=None):  # noqa: ANN001
+        if "Think before writing" in messages[0]["content"]:
+            stats.content.append("1. RESTATE the file.\n")
+            yield ("think", "1. RESTATE the file.\n")
+            return
+        asks.append(messages[-1]["content"])
+        if len(asks) == 1:
+            return  # the model answered with nothing at all
+        for line in ("<<<FILE app.js>>>\n", 'document.body.dataset.ready = "1";\n'):
+            stats.content.append(line)
+            yield ("content", line)
+
+    llm.stream = fake_stream
+    try:
+        agent = Specialist(id="a1", name="Ada", role="frontend", model="stub")
+        # `quick` skips the critic pass, so the two compose calls are the only code asks.
+        run = RunState(run_id="retried", prompt="a page", specialists=[agent], depth="quick")
+        unit = WorkUnit(id="wu-1", title="Logic", role="frontend", file="app.js", objective="the page", agent="a1")
+        asyncio.run(execution.write_unit(run, unit, []))
+
+        assert len(asks) == 2, "an empty first answer must be retried, not accepted"
+        assert "previous answer" in asks[1]
+        assert run.files["app.js"]["done"] is True
+        assert "dataset.ready" in (tmp_path / "retried" / "app.js").read_text(encoding="utf-8")
+        assert unit.status == "done"
+    finally:
+        llm.stream = original_stream
+        state_mod.RUNS_ROOT = original_root
+
+
 def test_marker_cannot_escape_the_run_workspace(tmp_path: Path) -> None:
     original_root = state_mod.RUNS_ROOT
     original_stream = llm.stream

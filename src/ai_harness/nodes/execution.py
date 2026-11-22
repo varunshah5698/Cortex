@@ -173,7 +173,6 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
         {s.name: run.contracts[s.id] for s in run.specialists if s.id in run.contracts and s.id != agent.id}
     )
     research = context.notes_context(notes)
-    sink = FileSink(run, agent)
 
     try:
         # Pass 1 — deliberation. Slow, visible, and it grounds the code.
@@ -260,41 +259,65 @@ async def write_unit(run: RunState, unit: WorkUnit, notes: list[str]) -> None:
 
         # Pass 2 — the file itself, written against the agent's own plan. The answer may
         # carry extra files behind <<<FILE path>>> markers; each lands on its own path.
-        await run.emit({"type": "status", "agent": agent.id, "status": "writing"})
-        files, code_usage = await executor.compose(
-            agent,
-            [
-                {
-                    "role": "system",
-                    "content": prompts.CODE.format(
-                        name=agent.name,
-                        role=agent.role,
-                        file=unit.file,
-                        objective=unit.objective,
-                        prompt=run.prompt,
-                        acceptance=intent.contract(getattr(run, "acceptance", None) or []),
-                        goal=prompts.GOAL_CONTRACT.format(goal=goal.read(run)),
-                        reasoning=context.clip(reasoning, 1400 if run.depth == "ultra" else 700),
-                        critique=context.clip(critique, 1600 if run.depth == "ultra" else 700)
-                        or "(no reviewer pass for this run)",
-                        design=prompts.DESIGN_CONTRACT,
-                        contracts=peers,
-                        peer_files=context.files_context(run.files, exclude=unit.file),
-                        lessons=memory.lessons(),
-                        progress=progress.orient(run),
-                    ),
-                },
-                {"role": "user", "content": f"Write {unit.file} now."},
-            ],
-            on_think=lambda text: run.emit({"type": "think", "agent": agent.id, "delta": text}),
-            on_code=sink.write,
-            on_marker=sink.start,
-            default_path=unit.file,
-        )
-        await run.emit(run.track_usage(agent, "writing", code_usage))
+        #
+        # A unit that wrote nothing used to be logged and skipped, leaving a file the plan
+        # named empty — the failure the clean-state gate reports as "declared by the plan
+        # but still empty". Every planned file gets a second ask, with the empty first
+        # answer named, before the unit is given up.
+        shipped: list[str] = []
+        for attempt in range(2):
+            sink = FileSink(run, agent)
+            ask = f"Write {unit.file} now."
+            if attempt:
+                await run.emit(
+                    {
+                        "type": "message",
+                        "from": "verify",
+                        "text": f"{unit.file} was not written; asking {agent.name} again.",
+                        "kind": "review",
+                    }
+                )
+                ask = (
+                    f"Your previous answer produced no file for {unit.file}. "
+                    f"Write the complete file now, starting with <<<FILE {unit.file}>>>."
+                )
+            await run.emit({"type": "status", "agent": agent.id, "status": "writing"})
+            files, code_usage = await executor.compose(
+                agent,
+                [
+                    {
+                        "role": "system",
+                        "content": prompts.CODE.format(
+                            name=agent.name,
+                            role=agent.role,
+                            file=unit.file,
+                            objective=unit.objective,
+                            prompt=run.prompt,
+                            acceptance=intent.contract(getattr(run, "acceptance", None) or []),
+                            goal=prompts.GOAL_CONTRACT.format(goal=goal.read(run)),
+                            reasoning=context.clip(reasoning, 1400 if run.depth == "ultra" else 700),
+                            critique=context.clip(critique, 1600 if run.depth == "ultra" else 700)
+                            or "(no reviewer pass for this run)",
+                            design=prompts.DESIGN_CONTRACT,
+                            contracts=peers,
+                            peer_files=context.files_context(run.files, exclude=unit.file),
+                            lessons=memory.lessons(),
+                            progress=progress.orient(run),
+                        ),
+                    },
+                    {"role": "user", "content": ask},
+                ],
+                on_think=lambda text: run.emit({"type": "think", "agent": agent.id, "delta": text}),
+                on_code=sink.write,
+                on_marker=sink.start,
+                default_path=unit.file,
+            )
+            await run.emit(run.track_usage(agent, "writing", code_usage))
+            shipped = await sink.finish(files)
+            if unit.file in shipped:
+                break
 
-        shipped = await sink.finish(files)
-        if not shipped:
+        if unit.file not in shipped:
             await run.emit(
                 {"type": "error", "message": f"{agent.name} produced no code for {unit.file}", "agent": agent.id}
             )

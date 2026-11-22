@@ -374,6 +374,12 @@ KEYS_FILE = Path(os.getenv("HARNESS_KEYS_FILE", ROOT / ".harness-keys.json"))
 # Turning this off removes the human checkpoint; it exists for unattended CI, not for
 # normal use.
 REQUIRE_APPROVAL = _bool("HARNESS_REQUIRE_APPROVAL", True)
+# A run that reached `done` is previewed on the click that asked for the build: the
+# local install/build/serve pipeline starts without a second approval, because `done` is
+# the point at which the tree stopped changing. A run closed out by an error or a
+# restart still asks, and cloud/Vercel deploys always ask because they publish elsewhere.
+# 0 restores the prompt for local previews too.
+AUTO_PREVIEW = _bool("HARNESS_AUTO_PREVIEW", True)
 
 TERMINAL_ENABLED = _bool("HARNESS_ALLOW_TERMINAL", False)
 TERMINAL_TIMEOUT = _float("HARNESS_TERMINAL_TIMEOUT", 10.0)

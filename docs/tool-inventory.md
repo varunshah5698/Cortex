@@ -39,7 +39,7 @@ and is reported by `GET /api/health`.
 | `modules/llm.py` — provider calls | The models are the workers | Unbounded spend, or hammering a provider. Control: budget checked before each request (tokens, dollars, calls); per-model prices; retry that never retries auth failures; cache only at temperature 0; an optional single fallback model (`HARNESS_FALLBACK_MODEL`) so a hard outage does not end the run |
 | `modules/roster.py` — provider keys | A key must never live in the browser | Reading keys back out. Control: written once to a `0600` file; `/api/roster` reports `has_key`, never the value; `/api` refuses foreign origins and requires `x-harness-token` |
 | `GET /api/run/{id}/events` — SSE stream | Watching the room is the product | Streaming a run to a foreign page. Control: origin check plus token; loopback only |
-| `POST /api/run/{id}/serve` — the approval itself | Somebody has to decide, and the decision should be informed | Approving blind. Control: returns `needs_approval` with the full command list; only `approve=1` proceeds; `HARNESS_REQUIRE_APPROVAL=0` exists for unattended CI and is off by default |
+| `POST /api/run/{id}/serve` — the approval itself | Somebody has to decide, and the decision should be informed | Approving blind. Control: returns `needs_approval` with the full command list; `approve=1` proceeds. A run whose log ends in `done` is auto-approved for its **local** preview (`HARNESS_AUTO_PREVIEW=1`, the default) because the verifier already settled that the tree stopped changing; a run closed out by an error or a restart still asks, and cloud/Vercel deploys always ask. `HARNESS_REQUIRE_APPROVAL=0` removes the checkpoint entirely for unattended CI and is off by default |
 
 ## Policy
 

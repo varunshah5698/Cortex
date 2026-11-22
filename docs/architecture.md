@@ -211,7 +211,11 @@ until `POST /api/run/{id}/serve` actually runs. Serving writes the service's sta
 the run and `.harness-metrics.json` (`previewed: true`, `build: {state, kind, detail, at}`),
 and a restored run reads it back from the ledger, so a reload cannot make a served run
 claim it was never compiled. `GET /api/run/{id}/serve` refreshes that record as the
-install/build settles.
+install/build settles. A finished run's local preview starts without a second prompt
+(`HARNESS_AUTO_PREVIEW`, on by default): `done` is the point at which the tree stopped
+changing, so the click that asked for the build is the approval, and the auto-approval is
+written into the run's transcript. A run closed out by an error or a restart still asks,
+and cloud/Vercel deploys always ask because they publish elsewhere.
 
 The UI in `src/lib/harness.ts` types exactly this shape.
 
