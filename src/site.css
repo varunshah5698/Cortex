@@ -2015,6 +2015,25 @@
   }
 }
 
+@media (max-width: 480px) {
+  .ws-bar {
+    flex-wrap: wrap;
+    row-gap: 8px;
+    padding: 8px 12px;
+  }
+  .ws-bar-info {
+    min-width: 0;
+  }
+  .ws-bar-actions {
+    width: 100%;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .ws-bar-actions .cta-primary {
+    padding: 0 14px;
+  }
+}
+
 .auth-switch {
   display: flex;
   gap: 8px;
