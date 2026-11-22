@@ -287,7 +287,9 @@ def replay_regressions(only: list[str] | None = None) -> list[dict]:
             str(path): {"agent": "", "content": str(body), "done": True}
             for path, body in (entry.get("files") or {}).items()
         }
-        report = verify.check(files, list(files))
+        declared = [str(path) for path in (entry.get("planned_files") or [])] or list(files)
+        criteria = [item for item in (entry.get("acceptance") or []) if isinstance(item, dict)] or None
+        report = verify.check(files, declared, criteria)
         caught = not bool(report.get("ok"))
         results.append(
             {

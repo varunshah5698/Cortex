@@ -177,3 +177,12 @@ def test_the_loop_exposes_the_new_tools_to_the_model() -> None:
 def test_the_aliases_point_at_real_tools() -> None:
     for alias, target in agent_loop.TOOL_ALIASES.items():
         assert target in agent_loop.TOOLS, f"{alias} points at unknown tool {target}"
+
+
+def test_agent_write_drops_the_providers_tool_framing(tmp_path: Path) -> None:
+    state = _state(tmp_path, {"index.html": "<html></html>\n"})
+    bar = chr(0xFF5C)
+    dirty = f"<html><body>hi</body></html>\n</{bar}DSML{bar} parameter>"
+    state.execute("write", {"path": "index.html", "content": dirty})
+    assert "DSML" not in state.run.fm.read("index.html")
+    assert state.run.fm.read("index.html").strip().endswith("</html>")

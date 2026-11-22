@@ -30,6 +30,10 @@ def test_a_known_model_resolves_to_its_own_row() -> None:
     # Longest pattern first: gpt-4o-mini must not be priced as gpt-4o.
     assert budget.row_for(_spec("gpt-4o-mini")) == "gpt-4o-mini"
     assert budget.row_for(_spec("claude-sonnet-4-5")) == "claude-sonnet-4"
+    assert (
+        budget.row_for(_spec("deepseek-ai/DeepSeek-V4.1-Flash", base="https://api.river.ai/v1"))
+        == "deepseek-v4.1-flash"
+    )
     assert budget.is_priced(_spec("gpt-4o-mini")) is True
 
 

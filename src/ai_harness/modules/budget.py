@@ -56,6 +56,8 @@ TABLE: list[tuple[str, float, float]] = [
     ("claude-opus-4", 15.00, 75.00),
     ("gemini-2.0-flash", 0.10, 0.40),
     ("gemini-2.5-pro", 1.25, 10.00),
+    # River's standard rate for the configured DeepSeek model (USD per 1M tokens).
+    ("deepseek-v4.1-flash", 0.096, 0.384),
     # The eval suite's deterministic stand-in: it never reaches a provider.
     ("scripted", 0.0, 0.0),
 ]

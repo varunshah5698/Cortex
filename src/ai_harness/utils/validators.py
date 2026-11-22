@@ -6,6 +6,16 @@ import re
 from pathlib import Path
 
 SAFE_NAME = re.compile(r"^[\w./-]+$")
+# A provider that turns a tool call into text can leave its transport framing in the
+# generated content. DeepSeek's V4 models emit `<｜DSML｜ ...>` markers this way; Vite
+# warns about the stray `<` but still builds, so the file looks shipped with the model's
+# plumbing baked in. Strip only that known marker, not arbitrary angle brackets.
+PROTOCOL_TAG = re.compile(r"</?[｜|]DSML[｜|][^>\n]*>\s*", re.IGNORECASE)
+
+
+def strip_protocol(text: str) -> str:
+    """Remove a provider's tool-call framing from generated file content."""
+    return PROTOCOL_TAG.sub("", text)
 
 
 class UnsafePath(ValueError):

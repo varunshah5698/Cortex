@@ -42,7 +42,7 @@ from ..config.settings import (
     NATIVE_TOOLS,
 )
 from ..models import Specialist
-from ..utils.validators import UnsafePath
+from ..utils.validators import UnsafePath, strip_protocol
 from . import code_search, llm, progress, prompts, protected, shell, skills, thrash, tool_log
 
 TOOLS = ("list", "read", "search", "grep", "shell", "edit", "write", "skill", "check", "delegate", "done")
@@ -512,6 +512,7 @@ class LoopState:
             raise ToolError(f"{path!r} is outside the run workspace")
         if path in RESERVED or path.startswith(".harness"):
             raise ToolError(f"{path} is harness-owned bookkeeping and cannot be edited by a run")
+        content = strip_protocol(content)
         existing = self._read(path)
         if protected.frozen(path, "rewrite", existing):
             raise ToolError(protected.describe(path))

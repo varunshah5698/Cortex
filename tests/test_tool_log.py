@@ -133,3 +133,20 @@ def test_the_runner_logs_the_serve_it_started(tmp_path: Path) -> None:
     assert served[0]["result"].startswith("ready on :")
     assert served[0]["ms"] >= 0
     assert "static_server.py" in served[0]["args"]["command"]
+
+
+def test_a_streamed_file_drops_the_providers_tool_framing(run) -> None:  # noqa: ANN001
+    """A provider's closing tags are plumbing, not the person's CSS or markup.
+
+    DeepSeek V4 streams its `DSML` tool framing into a file when it turns a call into
+    text. Vite warns about the stray `<` but still builds, so the file ships with the
+    model's plumbing baked into it.
+    """
+    state, spec = run
+    bar = chr(0xFF5C)
+    tag = f"</{bar}DSML{bar} parameter>"
+    dirty = f"<html><body>hi</body></html>\n{tag}\n</{bar}DSML{bar} invoke>\n"
+    asyncio.run(FileSink(state, spec).finish([("index.html", dirty)]))
+    body = state.fm.read("index.html")
+    assert "DSML" not in body
+    assert body.strip().endswith("</html>")

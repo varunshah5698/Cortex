@@ -122,15 +122,28 @@ def record(run, report: dict | None = None, message: str = "") -> bool:
 
 
 def promote(run, report: dict | None = None) -> bool:
-    """Snapshot the run's tree as an eval case that must keep failing verification."""
+    """Snapshot the run's tree as an eval case that must keep failing verification.
+
+    Only a tree the verifier actually found faulty is a regression. A provider outage
+    (`review-unavailable`) or a budget stop leaves a clean tree but a blocked run; saving
+    it here creates a case the replay can never fail, and every later `verify.sh` run
+    reports a regression that is really the weather.
+    """
     files = {path: str(meta.get("content") or "") for path, meta in (getattr(run, "files", {}) or {}).items()}
     if not files:
+        return False
+    issues = [item for item in (report or {}).get("issues") or [] if item.get("level") == "error"]
+    if not issues:
         return False
     entry = {
         "name": f"regression-{getattr(run, 'run_id', 'unknown')}",
         "created": datetime.now(timezone.utc).isoformat(),
         "prompt": getattr(run, "prompt", ""),
         "note": f"promoted from a blocked run: {symptom(report)}",
+        # The replay needs the plan to reproduce an empty-file finding; the file map
+        # alone cannot tell whether a file was required.
+        "planned_files": list(getattr(run, "planned_files", []) or []),
+        "acceptance": list(getattr(run, "acceptance", []) or []),
         "files": {path: body[:8000] for path, body in files.items()},
     }
     try:

@@ -160,8 +160,20 @@ REACT_MANIFEST = """{
   "dependencies": {
     "react": "18.3.1",
     "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "4.3.3",
+    "vite": "5.4.11"
   }
 }
+"""
+
+REACT_VITE_CONFIG = """import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+export default defineConfig({
+  plugins: [react()],
+});
 """
 
 REACT_INDEX = """<!doctype html>
@@ -291,6 +303,7 @@ CASES: list[Case] = [
                 ("Shell", "frontend", "index.html", "the document that mounts #root"),
                 ("Entry", "frontend", "src/main.tsx", "mount App into #root"),
                 ("UI", "frontend", "src/App.tsx", "the component tree"),
+                ("Build", "backend", "vite.config.ts", "the Vite config for React"),
             ],
         ),
         code={
@@ -298,6 +311,7 @@ CASES: list[Case] = [
             "index.html": REACT_INDEX,
             "src/main.tsx": REACT_MAIN,
             "src/App.tsx": REACT_APP,
+            "vite.config.ts": REACT_VITE_CONFIG,
         },
         expect_ok=True,
         note="a stack-aware scaffold whose imports resolve",

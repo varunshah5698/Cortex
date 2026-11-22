@@ -104,6 +104,16 @@ def test_a_promoted_run_replays_as_a_regression(tmp_path, monkeypatch):
     assert entries[0]["name"].startswith("regression-")
 
 
+def test_a_provider_outage_is_not_promoted_as_a_regression(tmp_path, monkeypatch):
+    """A clean tree behind a failed provider is weather, not a replayable defect."""
+    store = tmp_path / "regressions.jsonl"
+    monkeypatch.setattr(failures, "REGRESSIONS", store)
+    report = {"ok": False, "stage": "review-unavailable", "issues": [], "errors": 1}
+
+    assert failures.promote(FakeRun(tmp_path), report) is False
+    assert not store.exists()
+
+
 def test_classification_falls_back_to_the_message():
     assert failures.classify({}, "Run stopped by its budget — 20000 tokens") == "budget"
     assert failures.classify({}, "Run stopped at its time limit") == "timeout"
