@@ -1738,6 +1738,9 @@
 .mtx-legend i.out {
   background: #7a6f8c;
 }
+.mtx-table-wrap {
+  overflow-x: auto;
+}
 .mtx-table {
   width: 100%;
   border-collapse: collapse;
@@ -1813,10 +1816,13 @@
   .vault-actions {
     margin-left: 0;
     width: 100%;
+    min-width: 0;
   }
   .vault-actions select {
     flex: 1;
+    min-width: 0;
     max-width: none;
+    text-overflow: ellipsis;
   }
   .vault-view-head {
     flex-wrap: wrap;
