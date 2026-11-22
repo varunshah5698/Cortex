@@ -8,8 +8,11 @@ happens when the same call repeats. Each is deterministic, so each is pinned her
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -41,6 +44,21 @@ def test_prefix_wraps_the_command_when_available(monkeypatch, tmp_path):
     monkeypatch.setattr(sandbox, "available", lambda: True)
     prefix = sandbox.prefix("run1", tmp_path)
     assert prefix[0] == "sandbox-exec" and prefix[-1] == "--"
+
+
+def test_a_profile_that_cannot_be_written_fails_closed(monkeypatch, tmp_path):
+    monkeypatch.setattr(sandbox, "available", lambda: True)
+    monkeypatch.setattr(sandbox.tempfile, "gettempdir", lambda: str(tmp_path))
+    # The shared temp directory is not ours: a non-directory in the per-uid slot used
+    # to make the write fail and the command run unsandboxed while `describe` claimed
+    # containment.
+    getuid = getattr(os, "getuid", None)
+    uid = getuid() if callable(getuid) else None
+    (tmp_path / ("harness-sandbox" if uid is None else f"harness-sandbox-{uid}")).write_text(
+        "not a directory", encoding="utf-8"
+    )
+    with pytest.raises(sandbox.SandboxError):
+        sandbox.prefix("run1", tmp_path)
 
 
 # ---------- untrusted content ----------

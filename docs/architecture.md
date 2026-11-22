@@ -198,7 +198,10 @@ waiting for a person to ask.
 Processes the runner starts are contained by `modules/sandbox.py`: on macOS every child is
 wrapped in `sandbox-exec` with writes denied under the owner's home (except the run
 workspace and package caches) and key stores unreadable. Where no sandbox exists the
-service log says so — `GET /api/run/{id}/serve` reports `sandbox` in its own words.
+service log says so — `GET /api/run/{id}/serve` reports `sandbox` in its own words. A
+profile the harness cannot write (a shared temp directory it does not own, a failed
+write) fails the step instead of starting the child unprotected: the log must never claim
+containment the process does not have.
 Cache hits are reported as a `message` with `kind: "cache"` so they never inflate the
 token ledger.
 

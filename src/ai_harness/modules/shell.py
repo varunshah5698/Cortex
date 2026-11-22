@@ -84,7 +84,11 @@ async def run(command: str, workspace: Path, run_id: str, timeout: float = TIMEO
     if effect != permissions.ALLOW:
         raise ShellDenied(f"refused by policy ({effect}): {reason}")
 
-    wrapped = [*sandbox.prefix(run_id, workspace), *argv]
+    try:
+        wrapped = [*sandbox.prefix(run_id, workspace), *argv]
+    except sandbox.SandboxError as exc:
+        # The tool promised containment; it may not run the command without it.
+        raise ShellDenied(f"the sandbox profile could not be prepared: {exc}") from exc
     process = await asyncio.create_subprocess_exec(
         *wrapped,
         cwd=str(workspace),
