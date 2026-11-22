@@ -11,11 +11,16 @@ SAFE_NAME = re.compile(r"^[\w./-]+$")
 # warns about the stray `<` but still builds, so the file looks shipped with the model's
 # plumbing baked in. Strip only that known marker, not arbitrary angle brackets.
 PROTOCOL_TAG = re.compile(r"</?[｜|]DSML[｜|][^>\n]*>\s*", re.IGNORECASE)
+# A model that frames its answer with file markers can leave one in the content: the
+# closing `<<<END FILE>>>` was written as the last line of two components in a real build,
+# a syntax error in both. The stream router drops these now; this is the second line of
+# defence for any path that writes text without going through it.
+FILE_MARKER = re.compile(r"^\s*<<<\s*(?:END\s*)?FILE\b[^>]*>>>\s*$", re.IGNORECASE | re.MULTILINE)
 
 
 def strip_protocol(text: str) -> str:
-    """Remove a provider's tool-call framing from generated file content."""
-    return PROTOCOL_TAG.sub("", text)
+    """Remove a provider's tool-call framing and stray file markers from file content."""
+    return FILE_MARKER.sub("", PROTOCOL_TAG.sub("", text))
 
 
 class UnsafePath(ValueError):

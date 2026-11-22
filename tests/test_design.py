@@ -213,7 +213,14 @@ def test_the_harness_own_react_scaffold_is_not_failed_by_a_component_sheet():
         }
     )
 
-    assert design.audit(files) == []
+    # The intent is that a correct React tree is not *failed*: no error-level finding.
+    # Warnings about the sheet's own polish (a type scale) are legitimate and were always
+    # reported — this test used to pass only because the sensor never read the component,
+    # so it never saw that the sheet was the only thing being judged.
+    issues = design.audit(files)
+    assert [item for item in issues if item["level"] == "error"] == []
+    assert "dead_stylesheet" not in _codes(issues)
+    assert "unstyled_class" not in _codes(issues)
 
 
 def test_a_style_block_plus_a_reset_sheet_is_styled():
@@ -289,3 +296,46 @@ def test_a_bad_timeout_env_does_not_stop_the_harness_importing():
 
     assert result.returncode == 0, result.stderr[-500:]
     importlib.invalidate_caches()
+
+
+def test_a_react_component_using_a_class_the_sheet_never_defines_is_reported():
+    """JSX writes `className`, and the sensor only matched `class`.
+
+    A real build shipped `.btn`, `.hero-actions` and `.lead` in its components while
+    `index.css` defined none of them: the buttons rendered as bare underlined links with no
+    gap between them. The sensor reported nothing, because `CLASS_ATTR` could not see a
+    single React class and the page's own `<div id="root">` carries none either.
+    """
+    from ai_harness.nodes import planning
+
+    html = planning._index("src/main.tsx", "src/index.css")
+    files = _files(
+        **{
+            "index.html": html,
+            "src__index.css": DESIGNED_SHEET,
+            "src__main.tsx": 'import App from "./App";',
+            "src__App.tsx": (
+                "export default function App(){return <section className='hero'><a className='btn'>Go</a></section>}"
+            ),
+        }
+    )
+
+    codes = _codes(design.audit(files))
+    assert "unstyled_class" in codes, "a component class with no rule must be reported"
+
+
+def test_a_react_component_whose_classes_are_all_defined_is_quiet():
+    """The sensor must not cry wolf on a tree that is actually styled."""
+    from ai_harness.nodes import planning
+
+    html = planning._index("src/main.tsx", "src/index.css")
+    files = _files(
+        **{
+            "index.html": html,
+            "src__index.css": DESIGNED_SHEET,
+            "src__main.tsx": 'import App from "./App";',
+            "src__App.tsx": "export default function App(){return <main className='card'>x</main>}",
+        }
+    )
+
+    assert "unstyled_class" not in _codes(design.audit(files))

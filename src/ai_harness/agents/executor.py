@@ -16,6 +16,11 @@ from ..models import Specialist
 from ..modules import llm
 
 MARKER = re.compile(r"^\s*<<<FILE\s+(.+?)>>>\s*$")
+# A model that opens a section with `<<<FILE path>>>` often closes it with `<<<END FILE>>>`.
+# Only the opening marker was recognised, so the closing one was written into the file as
+# content — a real build shipped `<<<END FILE>>>` as the last line of main.tsx and
+# Header.tsx, which is a syntax error in both and cost the run its `done`.
+END_MARKER = re.compile(r"^\s*<<<\s*END\s*(?:FILE)?\s*>>>\s*$", re.I)
 FENCE = re.compile(r"^\s*```")
 
 
@@ -76,7 +81,11 @@ class CodeStream:
         return out
 
     def _line(self, line: str) -> list[tuple[str, str, str]]:
-        marker = MARKER.match(line.strip())
+        stripped = line.strip()
+        if END_MARKER.match(stripped):
+            # Drop the closing marker: it is protocol, not content.
+            return []
+        marker = MARKER.match(stripped)
         if marker:
             path = clean_path(marker.group(1)) or self.default_path
             self.mode = "code"

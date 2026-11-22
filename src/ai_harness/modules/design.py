@@ -34,7 +34,7 @@ TAG_IN_MARKUP = re.compile(r"<\s*([a-zA-Z][\w-]*)")
 # HTML attribute names are case-insensitive and quotes are optional in practice, so a
 # `<main class=card>` or `<main CLASS="card">` must not read as an unstyled element. The
 # first pattern takes a quoted value, the second an unquoted one up to whitespace or `>`.
-CLASS_ATTR = re.compile(r"""\bclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"']+))""", re.I)
+CLASS_ATTR = re.compile(r"""\bclass(?:Name)?\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"']+))""", re.I)
 ID_ATTR = re.compile(r"""\bid\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"']+))""", re.I)
 # A stylesheet the page loads from somewhere else. `verify.EXTERNAL` already treats these
 # as legitimate, so the design sensor must not call such a page unstyled.
@@ -133,11 +133,23 @@ def _own_sheets(html: str, sheets: list[tuple[str, str]]) -> list[tuple[str, str
     return linked or sheets
 
 
-def _audit_page(path: str, html: str, sheets: list[tuple[str, str]], framework: bool) -> list[dict]:
+def _audit_page(
+    path: str,
+    html: str,
+    sheets: list[tuple[str, str]],
+    framework: bool,
+    markup: str = "",
+) -> list[dict]:
     issues: list[dict] = []
+    # `markup` is the component source for a framework tree. In a React/Vue/Svelte build the
+    # page's classes live in `.tsx`/`.vue` files, not in `index.html`, which only carries the
+    # mount node. Reading `html` alone meant `unstyled_class` could never fire on a
+    # component tree: a real build shipped `.btn`, `.hero-actions` and `.lead` in its
+    # components while `index.css` defined none of them, and the sensor reported nothing.
+    source = f"{html}\n{markup}" if markup else html
     classes = {
         name
-        for match in CLASS_ATTR.finditer(html)
+        for match in CLASS_ATTR.finditer(source)
         for group in match.groups()
         if group
         for name in group.split()
@@ -181,18 +193,21 @@ def _audit_page(path: str, html: str, sheets: list[tuple[str, str]], framework: 
         # them, and its markup is generated at runtime — so "no selector matches this
         # HTML" is not evidence of a dead sheet there. This is the exemption the module
         # docstring promises, applied to the check that actually needed it.
-        if framework:
-            return issues
-        issues.append(
-            _issue(
-                "error",
-                "dead_stylesheet",
-                sheet_path,
-                f"none of its {len(selectors)} selector(s) match a class, id or element in {path} — "
-                "the page is styled in name only",
+        #
+        # It must not skip the rest of the audit. Returning here meant a component tree
+        # whose sheet matched nothing got no `unstyled_class` finding either, so a page
+        # whose every class was undefined read as clean. Fall through instead.
+        if not framework:
+            issues.append(
+                _issue(
+                    "error",
+                    "dead_stylesheet",
+                    sheet_path,
+                    f"none of its {len(selectors)} selector(s) match a class, id or element in {path} — "
+                    "the page is styled in name only",
+                )
             )
-        )
-        return issues
+            return issues
 
     missing = sorted(classes - styled_classes)
     if missing:
@@ -262,9 +277,15 @@ def audit(files: dict[str, dict]) -> list[dict]:
     if not pages:
         return []
     framework = _is_framework(files)
+    # The component sources, for a framework tree: its classes live here, not in the page.
+    markup = "\n".join(
+        meta.get("content") or ""
+        for path, meta in sorted(files.items())
+        if path.endswith((".tsx", ".jsx", ".vue", ".svelte", ".ts", ".js")) and (meta.get("content") or "").strip()
+    )
     issues: list[dict] = []
     for path, html in pages:
-        issues.extend(_audit_page(path, html, sheets, framework))
+        issues.extend(_audit_page(path, html, sheets, framework, markup))
     return issues
 
 
