@@ -197,11 +197,7 @@ symptom, so there are three separate bounds now:
   breakpoint exists; it cannot see that the result is *ugly*, that the contrast is
   actually insufficient, or that the layout breaks at a width it never tested. Those stay
   with the browser tier and the reviewer.
-- Context resets exist through per-run workspaces, and `modules/handoff.py` now writes a
-  `session-handoff.md` per run beside the runs root, so a new run can read the last run's
-  open work instead of starting from project memory alone. What is missing is the other
-  half: a new run does not yet *consume* it. `handoff.latest()` exists and is tested; no
-  node calls it at plan time, so the artefact is written and unread.
+- Cross-run handoffs are written for shipped runs and blocked verification/clean-state/goal/rubric outcomes. The planning node now reads the latest handoff and gives it to the planner as fenced, untrusted historical context; the current request wins, unrelated work should be ignored, and prior files are never assumed to exist in the new workspace. Handoffs still share the runs-root store because the harness has no explicit project id, so there is no hard project-level retrieval boundary yet.
 - The per-call bound is a wall-clock cut, not a token budget: a model that streams slowly
   but usefully for longer than `HARNESS_STREAM_SECONDS` is cut mid-answer. The setting is
   the knob; a per-model value would be better than one number for every provider.

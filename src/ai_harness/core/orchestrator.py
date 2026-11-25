@@ -214,6 +214,7 @@ class Orchestrator:
             # moment of failure, not remembered later.
             failures.record(self.run, report)
             failures.promote(self.run, report)
+            handoff.write(self.run)
             receipt.write(self.run)
             memory.append(self.run, f"stopped short — {failed} verification error(s)")
             event_log(self.run.run_id, "verification-failed", errors=failed, issues=report.get("issues", [])[:12])
@@ -460,6 +461,9 @@ class Orchestrator:
                 await self.run.emit({"type": "message", "from": "harness", "kind": "notice", "text": over})
             # Best-effort mirror: a Convex outage must not fail a run that is already
             # executing on disk. See modules/cloud_sync.py.
+            # The deadline is the primary budget: an out-of-time run may not start any
+            # more work, and the mirror is work, so check it before the to_thread call.
+            runtime.check_deadline()
             await asyncio.to_thread(cloud_sync.start, self.run.run_id, self.run.prompt, self.run.depth)
 
             # A local daemon that is not running cannot write a file; fail before the

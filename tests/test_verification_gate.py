@@ -70,6 +70,8 @@ def test_run_refuses_done_when_verification_still_fails(tmp_path: Path, monkeypa
             id="p1", name="Ada", role="planner", model="gpt-4o-mini", baseUrl="https://api.openai.com/v1"
         )
         run = RunState(run_id="gate", prompt="build a page", specialists=[planner], depth="quick")
+        run.workspace = tmp_path / "gate"
+        run.workspace.mkdir(parents=True, exist_ok=True)
         asyncio.run(orch.Orchestrator(run).run_all())
 
         kinds = [event["type"] for event in run.events]
@@ -85,6 +87,9 @@ def test_run_refuses_done_when_verification_still_fails(tmp_path: Path, monkeypa
         ledger = json.loads((tmp_path / "gate" / ".harness-metrics.json").read_text(encoding="utf-8"))
         assert ledger["done"] is False
         assert ledger["verification"]["ok"] is False
+        saved_handoff = tmp_path / "handoffs" / "gate.md"
+        assert saved_handoff.is_file(), "a blocked verification result must be available to the next run"
+        assert "missing_asset" in saved_handoff.read_text(encoding="utf-8")
     finally:
         state_mod.RUNS_ROOT = original_root
 

@@ -9,7 +9,16 @@ from ..agents import planner as planner_agent
 from ..config.settings import INTENT_CHECK, PLAN_SECONDS
 from ..core.state import RunState
 from ..models import Specialist, WorkUnit
-from ..modules import intent, llm, memory, progress, prompts, tool_log
+from ..modules import (
+    handoff,
+    intent,
+    llm,
+    memory,
+    progress,
+    prompts,
+    tool_log,
+    untrusted,
+)
 
 PLAN_FILE = ".harness-plan.json"
 HARNESS_FILES = ("package.json", "index.html", "vite.config.ts", "tsconfig.json")
@@ -180,6 +189,22 @@ async def run(run: RunState, planner: Specialist) -> tuple[list[WorkUnit], list[
     learned = memory.lessons()
     if learned:
         remembered = f"{remembered}\n\nDurable lessons:\n{learned}".strip()
+    previous_handoff = handoff.latest(run)
+    if previous_handoff:
+        fenced = untrusted.fence(previous_handoff, "previous run", kind="session handoff")
+        if fenced:
+            remembered = f"{remembered}\n\n{prompts.SESSION_HANDOFF.format(handoff=fenced)}".strip()
+            await run.emit(
+                {
+                    "type": "message",
+                    "from": "harness",
+                    "kind": "continuity",
+                    "text": (
+                        "Loaded a previous session handoff for planning as historical context; "
+                        "the current request remains authoritative."
+                    ),
+                }
+            )
     plan_call = planner_agent.plan(planner, run.prompt, remembered)
     try:
         if PLAN_SECONDS > 0:

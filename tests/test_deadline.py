@@ -54,6 +54,8 @@ def test_a_run_past_its_deadline_ends_timed_out_without_done(tmp_path: Path, mon
     monkeypatch.setattr(orch.planning, "run", planning)
     monkeypatch.setattr(orch.execution, "run", never)
     monkeypatch.setattr(orch.review, "run", never)
+    mirror_calls: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(orch.cloud_sync, "start", lambda *args: mirror_calls.append(args))
 
     try:
         run = RunState(run_id="deadline", prompt="build a page", specialists=[planner], depth="quick")
@@ -75,6 +77,10 @@ def test_a_run_past_its_deadline_ends_timed_out_without_done(tmp_path: Path, mon
         assert "done" not in kinds, kinds
         assert kinds[-1] == "error", kinds
         assert CALLS == [], "the provider must not be called once the run is out of time"
+
+        # The deadline guardrail is checked before the best-effort mirror, so an
+        # already-expired run never leaves this process to update a remote log.
+        assert mirror_calls == [], f"mirror still ran after the deadline: {mirror_calls}"
 
         terminal = run.events[-1]
         assert terminal["timed_out"] is True

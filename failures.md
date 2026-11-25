@@ -32,6 +32,7 @@ belong here. The component column is the part of the harness that owned the fail
 | 2026-11-22 | `3cc7c0634dab` | code | cancelled | todo.md |
 | 2026-11-22 | `348fbf9324b2` | code | src/main.tsx: does not parse:          ╵ ~~ | src/components/Header.tsx, src/index.css, src/main.tsx |
 | 2026-11-22 | `c8d35d310f55` | unknown | stopped without a reported cause | — |
+| 2026-11-22 | `c6232e08a963` | code | src/App.tsx: src/App.tsx was declared by the plan but is still empty | index.html, src/App.tsx, src/components/About.css, src/components/About.tsx |
 
 ## What changed
 
