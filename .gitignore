@@ -19,6 +19,7 @@ evals/results/
 
 # Secrets and harness state must never be committed.
 .env
+.env.local
 .harness-*
 *.sb
 

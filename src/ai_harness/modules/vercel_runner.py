@@ -219,15 +219,18 @@ def credentials() -> tuple[bool, str]:
 
 
 async def deploy(run_id: str, workspace: Path) -> VercelService:
-    if not available():
-        raise VercelError(f"Vercel CLI is not installed ({VERCEL_BIN})")
-    if not supported(workspace):
-        raise VercelError("Vercel mode needs a package.json or index.html; this run is not a static/Node tree")
+    # Report a missing login before a missing CLI: a host that has the CLI but was never
+    # authenticated is the common server case, and "Vercel CLI is not installed" there
+    # hides the one thing the operator can act on.
     ok, why = credentials()
     if not ok:
         # Fail before creating a project: a half-created project with no deployment is a
         # leak that the TTL has to clean up, and the reason is more useful than an exit code.
         raise VercelError(why)
+    if not available():
+        raise VercelError(f"Vercel CLI is not installed ({VERCEL_BIN})")
+    if not supported(workspace):
+        raise VercelError("Vercel mode needs a package.json or index.html; this run is not a static/Node tree")
     project = _project(run_id)
     workdir = Path(tempfile.mkdtemp(prefix=f"{project}-"))
     _copy(workspace, workdir)
